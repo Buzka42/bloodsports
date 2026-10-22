@@ -1,0 +1,17 @@
+__pycache__/
+*.pyc
+build/
+dist/
+_preview/
+# Artwork waits until it is approved and tested in game; build.py and convert.py regenerate these.
+Bloodsports/Media/*.tga
+
+# pre-production: development files, kept on disk and not shared
+BLOODSPORTS.md
+RESEARCH_BRIEF.md
+docs/ADDON_ART_COMMISSIONS.md
+docs/BUILD_PLAN.md
+docs/IMPLEMENTATION.md
+docs/REPORT.md
+docs/STRESS_TEST.md
+docs/research/h_venues.md

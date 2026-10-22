@@ -1,0 +1,53 @@
+## Interface: 16001, 120100
+## Title: |cffd1381fBloodsports|r
+## Notes: Duels, fight clubs and goblin gambling rings: tracking, opponent finder, champions, referees. Feeds World of Meta.
+## Author: World of Meta
+## Version: 0.1.0
+## SavedVariables: BloodsportsDB
+## OptionalDeps: WorldOfMeta_Data
+## IconTexture: Interface\AddOns\Bloodsports\Media\icon_bloodsports
+## X-Category: PvP
+
+Libs\MetaKit\MetaKit.lua
+Libs\MetaKit\Safe.lua
+Libs\MetaKit\Addon.lua
+Libs\MetaKit\DB.lua
+Libs\MetaKit\Outbox.lua
+Libs\MetaKit\Data\GlobalStringsFallback.lua
+Libs\MetaKit\Strings.lua
+Libs\MetaKit\Codec.lua
+Libs\MetaKit\Comm.lua
+Libs\MetaKit\Lobby.lua
+Libs\MetaKit\Venue.lua
+Libs\MetaKit\UI\Theme.lua
+Libs\MetaKit\UI\Widgets.lua
+Libs\MetaKit\UI\List.lua
+Libs\MetaKit\UI\StatRows.lua
+Libs\MetaKit\UI\Rating.lua
+Libs\MetaKit\UI\Toast.lua
+Libs\MetaKit\UI\TalkingHead.lua
+Libs\MetaKit\UI\Minimap.lua
+Libs\MetaKit\UI\Settings.lua
+Libs\MetaKit\UI\ExportBox.lua
+Libs\MetaKit\UI\Demo.lua
+Media.lua
+Data\Venues.lua
+Core.lua
+Duel.lua
+Confirm.lua
+Stats.lua
+Finder.lua
+Club.lua
+Ring.lua
+UI\Theme.lua
+UI\Main.lua
+UI\DuelsTab.lua
+UI\MatchupsTab.lua
+UI\FinderTab.lua
+UI\ClubsTab.lua
+UI\RingTab.lua
+UI\RingHUD.lua
+UI\DuelCard.lua
+UI\Toasts.lua
+UI\Tooltip.lua
+UI\Minimap.lua
