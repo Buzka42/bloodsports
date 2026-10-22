@@ -126,7 +126,8 @@ function UI.Venues(kind)
   local out = {}
   local rows = ns.Data and ns.Data.Venues or {}
   for _, v in ipairs(rows) do
-    if not kind or v.kind == kind then out[#out + 1] = v end
+    -- Unverified venues cannot be matched or challenged yet, so players do not see them in pickers.
+    if not v.dormant and not v.unverified and (not kind or v.kind == kind) then out[#out + 1] = v end
   end
   return out
 end

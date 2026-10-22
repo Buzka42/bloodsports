@@ -38,10 +38,17 @@ function A:OnInit()
   self:InitDB("BloodsportsDB", DEFAULTS, MIGRATIONS, CHAR_DEFAULTS)
 end
 
+-- Rows the matcher may use: active (not dormant) and verified (measured position). See Data/Venues.lua.
+local function matchable(rows)
+  local out = {}
+  for _, v in ipairs(rows) do if not v.dormant and not v.unverified then out[#out + 1] = v end end
+  return out
+end
+
 function A:OnLogin()
   ns.char = self:Char()
   self:CompactOutbox()
-  ns.venues = MK.Venue and MK.Venue.New(ns.Data and ns.Data.Venues or {}) or nil
+  ns.venues = MK.Venue and MK.Venue.New(matchable(ns.Data and ns.Data.Venues or {})) or nil
   if MK.Comm then ns.comm = MK.Comm.New(self, ns.PREFIX) end
 end
 
