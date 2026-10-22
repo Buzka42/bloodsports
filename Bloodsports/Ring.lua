@@ -5,7 +5,10 @@
 -- Wire (all fields strings): RB(id,on,amount) bettor->host; RS(id,status,venue,currency,a,b,poolA,poolB,count,winner,cap)
 -- and RL(id,bettor,on,amount,paid,payout,paidOut) host->group. Pools/payouts count only PAID bets for gold
 -- (all bets for points); unpaid gold bets are voided at settlement. Gold caps: default 50g, site "cap" (in gold)
--- clamped to 1000g so integer math stays exact; points cap 1000. A rejected RB is silent (bettor sees no RL).
+-- clamped to 1g..50g (the 50g ceiling is absolute); points cap 1000. A rejected RB is silent (bettor sees no RL).
+-- Gold bets are also banded by the bookie's level (site data bloodsports.bookies[host].level, 1..5; no entry = 1):
+-- level L takes bets up to 10*L gold. The bettor checks before RB and the host checks in onBet.
+-- Settlement emits one outbox row of kind "bet" per settled gold bet for each role (bettor: its own bet; host: each bet).
 -- Settlement whispers each bettor their own RL (4/s) then broadcasts RS; roster changes re-broadcast RS only.
 -- Auto verdict settles immediately (also from "open", which locks the ring). Session is not persisted across reload.
 
@@ -19,8 +22,12 @@ local Ring = {}
 ns.Ring = Ring
 
 local MAX_BETS = 40
-local MAX_AMOUNT = 10000000          -- 1000 g in copper; keeps r*amount below 2^53
-local DEFAULT_CAP_GOLD, DEFAULT_CAP_POINTS = 500000, 1000
+local COPPER_PER_GOLD = 10000
+local GAMBLE_MIN_COPPER = 1 * COPPER_PER_GOLD    -- 1 g: smallest gold bet
+local GAMBLE_MAX_COPPER = 50 * COPPER_PER_GOLD   -- 50 g: absolute gold ceiling (host caps may be lower, never higher)
+local BAND_GOLD_PER_LEVEL, MAX_LEVEL = 10, 5     -- level L takes bets up to 10*L gold
+local WIRE_MAX = 1e12                            -- largest amount read off the wire; real limits are the caps above
+local DEFAULT_CAP_GOLD, DEFAULT_CAP_POINTS = GAMBLE_MAX_COPPER, 1000
 local MAX_TRADES, MAX_RECORDS = 200, 200
 local STATUS = { open = true, locked = true, settled = true, void = true, closed = true }
 local GROUP_CHANNELS = { PARTY = true, RAID = true, INSTANCE_CHAT = true, WHISPER = true }
@@ -115,8 +122,38 @@ local function hostCap(currency, hostName)
   if currency == "points" then return DEFAULT_CAP_POINTS end
   local g = MK.Wom("bloodsports", "referees", hostName, "cap")
   if type(g) ~= "number" then g = MK.Wom("bloodsports", "referees", (select(2, MK.PlayerKey())), "cap") end
-  if type(g) == "number" and g > 0 then return U.Clamp(math.floor(g * 10000), 1, MAX_AMOUNT) end
+  if type(g) == "number" and g > 0 then
+    return U.Clamp(math.floor(g * COPPER_PER_GOLD), GAMBLE_MIN_COPPER, GAMBLE_MAX_COPPER)
+  end
   return DEFAULT_CAP_GOLD
+end
+
+-- Bookie level 1..MAX_LEVEL from the uploader's data (bloodsports.bookies[name].level). No entry = level 1.
+local function bookieLevel(hostName)
+  local b = MK.Wom("bloodsports", "bookies", hostName)
+  local lv = type(b) == "table" and tonumber(b.level) or nil
+  if not lv or lv ~= lv then return 1 end
+  return U.Clamp(math.floor(lv), 1, MAX_LEVEL)
+end
+
+-- Bookie level and the largest gold bet (copper) that level takes. Used by the UI for refusal messages.
+function Ring.Band(hostName)
+  local level = bookieLevel(hostName)
+  return level, level * BAND_GOLD_PER_LEVEL * COPPER_PER_GOLD
+end
+
+Ring.LIMITS = { minCopper = GAMBLE_MIN_COPPER, maxCopper = GAMBLE_MAX_COPPER }
+
+-- Refusal reason for a bet of `amount` on a session with this currency, cap and host; nil when allowed.
+-- "amount" = below the minimum or above the table cap; "band" = above the bookie level's band (gold only).
+-- Shared by the bettor (PlaceBet) and the host (onBet).
+local function refusal(currency, amount, cap, hostName)
+  local min = currency == "gold" and GAMBLE_MIN_COPPER or 1
+  if amount < min or amount > (cap or 0) then return "amount" end
+  if currency == "gold" then
+    local _, max = Ring.Band(hostName)
+    if amount > max then return "band" end
+  end
 end
 
 local function push(ev, s, extra)
@@ -152,6 +189,23 @@ end
 ---------------------------------------------------------------------------
 -- Records for the bettor/host ledger (char.bets)
 
+-- Settlement result of one bet: "win", "loss", or "void" (no winner side, unpaid gold, or a refund because
+-- nobody paid on the winning side). Uses the pools as this client sees them (host: its bets; mirror: host totals).
+local function betResult(s, b)
+  local w = s.winner and side(s, s.winner)
+  if not w or not countsInPool(s, b) then return "void" end
+  local pa, pb = Ring.Pools(s)
+  if (w == "a" and pa or pb) <= 0 then return "void" end
+  return b.side == w and "win" or "loss"
+end
+
+-- Outbox row "bet" for one settled gold bet. Points sessions are a ledger only and emit nothing.
+local function pushBet(s, b, bookie)
+  if s.currency ~= "gold" or not b.side then return end
+  A:Push("bet", { id = s.id, bettor = b.bettor, bookie = bookie, amount = math.floor(b.amount), side = b.side,
+    result = betResult(s, b), venue = s.venue ~= "" and s.venue or nil, t = U.ServerTime() })
+end
+
 local function record(s)
   if s.recorded then return end
   s.recorded = true
@@ -161,10 +215,12 @@ local function record(s)
     status = s.status, poolA = pa, poolB = pb, count = count }
   if isHost(s) then
     rec.bets = U.Copy(s.bets)
+    for _, b in ipairs(s.bets) do pushBet(s, b, s.host) end
   else
     local mine = findBet(s, me())
     if not mine then return end
     rec.bet = U.Copy(mine)
+    pushBet(s, mine, s.host)
   end
   table.insert(ns.char.bets, rec)
   while #ns.char.bets > MAX_RECORDS do table.remove(ns.char.bets, 1) end
@@ -339,8 +395,9 @@ function Ring.PlaceBet(fighterName, amount)
   if s.status ~= "open" then return false, "closed" end
   local on = side(s, fighterName)
   if not on then return false, "fighter" end
-  amount = num(amount, 0, MAX_AMOUNT)
-  if amount < 1 or amount > (s.cap or 0) then return false, "amount" end
+  amount = num(amount, 0, WIRE_MAX)
+  local why = refusal(s.currency, amount, s.cap, s.host)
+  if why then return false, why end
   if side(s, me()) then return false, "fighter" end
   if findBet(s, me()) then return false, "duplicate" end
   if s.currency == "gold" then
@@ -361,8 +418,8 @@ local function onBet(sender, f)
   if not s.fighters.a or not inGroup(sender) or side(s, sender) or findBet(s, sender) then return end
   if #s.bets >= MAX_BETS then return end
   local on = side(s, f[2] or "")
-  local amount = num(f[3], 0, MAX_AMOUNT)
-  if not on or amount < 1 or amount > s.cap then return end
+  local amount = num(f[3], 0, WIRE_MAX)
+  if not on or refusal(s.currency, amount, s.cap, s.host) then return end
   local bet = { bettor = sender, on = s.fighters[on], side = on, amount = amount, paid = s.currency == "points",
     payout = 0, paidOut = false, t = U.ServerTime() }
   table.insert(s.bets, bet)
@@ -399,7 +456,7 @@ local function onState(sender, f, channel)
   s.totals = { a = num(f[7], 0, 1e12), b = num(f[8], 0, 1e12), count = num(f[9], 0, 999) }
   local w = clean(f[10])
   s.winner = w ~= "" and w or nil
-  s.cap = num(f[11], 0, MAX_AMOUNT)
+  s.cap = num(f[11], 0, currency == "points" and WIRE_MAX or GAMBLE_MAX_COPPER)
   if status == "settled" or status == "void" then record(s) end
   if status == "closed" then
     Ring.last = s
@@ -421,7 +478,7 @@ local function onLine(sender, f, channel)
   end
   b.on = on
   b.side = side(s, on)
-  b.amount = num(f[4], 0, MAX_AMOUNT)
+  b.amount = num(f[4], 0, WIRE_MAX)
   b.paid = f[5] == "1"
   b.payout = num(f[6], 0, 1e12)
   b.paidOut = f[7] == "1"

@@ -2,7 +2,10 @@
 local T = dofile(os.getenv("WOW_STUB") or "tests/wow_stub.lua")
 GetChannelName = function() return 5 end
 UnitIsGroupLeader = function() return T.leader ~= false end
-WorldOfMetaData = { bloodsports = { referees = { ["Tester-Normal"] = { cap = 100 } } } }
+-- Host cap 100 g clamps to the 50 g ceiling. Bookie level 5 (band 50 g) so the 30 g fixture bets stay in band;
+-- test_bands.lua covers levels 1 to 4.
+WorldOfMetaData = { bloodsports = { referees = { ["Tester-Normal"] = { cap = 100 } },
+  bookies = { ["Tester-Normal"] = { level = 5, positiveRatings = 20 } } } }
 local ns = T.LoadAddon("Bloodsports/Bloodsports.toc")
 local A, R = ns.A, ns.Ring
 
@@ -70,9 +73,9 @@ T.test("Open broadcasts state; fighters set", function()
   local s = R.Open("ratchet")
   T.ok(s and s.isHost, "session")
   T.eq(s.status, "open"); T.eq(s.currency, "gold"); T.eq(s.venue, "ratchet")
-  T.eq(s.cap, 1000000, "site cap 100 g (in copper)")
+  T.eq(s.cap, 500000, "site cap 100 g clamps to the 50 g ceiling (copper)")
   local rs = lastState()
-  T.eq(rs[1], s.id); T.eq(rs[2], "open"); T.eq(rs[4], "gold"); T.eq(rs[11], "1000000")
+  T.eq(rs[1], s.id); T.eq(rs[2], "open"); T.eq(rs[4], "gold"); T.eq(rs[11], "500000")
   T.eq(msgs("RS")[1].channel, "PARTY")
   local ok2 = R.Open("ratchet")
   T.eq(ok2, false, "second open refused")
@@ -236,11 +239,11 @@ T.test("gold void refunds only paid stakes; closing flags unpaid payouts", funct
   A.db.config.ring.currency = "gold"
   local s = R.Open("ratchet")
   R.SetFighters("Fa", "Fb")
-  bet("Alice-Normal", "Fa", "5000")
-  bet("Bob-Normal", "Fb", "7000")
-  trade("Alice", 5000, 0)
+  bet("Alice-Normal", "Fa", "10000")     -- 1 g: the minimum bet (was 5000 before the 1 g minimum)
+  bet("Bob-Normal", "Fb", "20000")
+  trade("Alice", 10000, 0)
   R.Void()
-  T.eq(betOf(s, "Alice-Normal").payout, 5000)
+  T.eq(betOf(s, "Alice-Normal").payout, 10000)
   T.eq(betOf(s, "Bob-Normal").payout, 0)
   T.eq(#R.Owed(), 1)
   R.Close()
@@ -289,11 +292,11 @@ T.test("mirror: PlaceBet validation and RB to host", function()
   ok, why = R.PlaceBet("Fa", 0); T.eq(why, "amount")
   ok, why = R.PlaceBet("Fa", 500001); T.eq(why, "amount")
   ok, why = R.PlaceBet("Fa", 20000); T.eq(why, "money")
-  T.ok(R.PlaceBet("Fa", 5000))
+  T.ok(R.PlaceBet("Fa", 10000))          -- 1 g (minimum); was 5000 (0.5 g) before the 1 g minimum
   flush()
   local m = msgs("RB")[1]
   T.eq(m.channel, "WHISPER"); T.eq(m.target, "Host-Normal")
-  T.eq(m.fields[1], "abc123"); T.eq(m.fields[2], "Fa-Normal"); T.eq(m.fields[3], "5000")
+  T.eq(m.fields[1], "abc123"); T.eq(m.fields[2], "Fa-Normal"); T.eq(m.fields[3], "10000")
   T.ok(R.session.pending)
 end)
 

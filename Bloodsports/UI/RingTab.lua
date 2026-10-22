@@ -149,7 +149,14 @@ local function build(pane)
     local amt = UI.ParseAmount(st.amount, s.currency)
     if not who then A:Print("No fighters yet.") return end
     if not amt then A:Print("Type an amount first (" .. (s.currency == "points" and "points" or "gold") .. ").") return end
-    UI.Try(ns.Ring.PlaceBet, who, amt)
+    local _, why = UI.Try(ns.Ring.PlaceBet, who, amt)
+    if why == "amount" then
+      local min = s.currency == "points" and 1 or ns.Ring.LIMITS.minCopper
+      A:Print("Bets run from " .. UI.Amount(min, s.currency) .. " to the table cap of " .. UI.Amount(s.cap, s.currency) .. ".")
+    elseif why == "band" then
+      local level, max = ns.Ring.Band(s.host)
+      A:Print("Bookie level " .. level .. " takes bets up to " .. UI.Amount(max, "gold") .. ".")
+    end
   end })
   place:SetPoint("TOPLEFT", bettor, "TOPLEFT", 0, -56)
 
