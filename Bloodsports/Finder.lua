@@ -38,7 +38,7 @@ local function sameFaction(f)
 end
 
 local function playerLong()
-  return (MK.PlayerKey())
+  return MK.CommKey()
 end
 
 ---------------------------------------------------------------------------

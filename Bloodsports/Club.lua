@@ -17,7 +17,7 @@ Club.DEADLINE = 7 * 86400
 local WINS_PER_OPP_DAY = 2
 local COUNTED = { both = true, referee = true }
 
-local function me() return (MK.PlayerKey()) end
+local function me() return MK.CommKey() end
 
 local function shortName(n)
   return type(n) == "string" and (n:match("^([^-]+)") or n) or ""

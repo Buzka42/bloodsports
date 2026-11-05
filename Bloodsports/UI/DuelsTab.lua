@@ -1,4 +1,4 @@
--- Duels tab: stats strip (record, win rate, streaks) and the duel history list, filterable by venue kind.
+-- Duels tab: stats strip (record, win rate, streaks), Export button and the duel history list, filterable by venue kind.
 
 local ADDON, ns = ...
 local MK = MetaKit
@@ -25,7 +25,7 @@ local function toRow(d)
   }
 end
 
-local STRIP_H, SLOT_W = 24, 120
+local STRIP_H, SLOT_W, EXPORT_W = 24, 100, 64
 local STATS = { "Record", "Win rate", "Streak", "Best" }
 
 local function build(pane)
@@ -44,6 +44,10 @@ local function build(pane)
   local dd = k.Dropdown(pane, { width = 130, skin = UI.SKIN, items = FILTERS, onSelect = function(v) filter = UI.Val(v) or "all"; UI.Refresh() end })
   dd:SetPoint("TOPRIGHT", pane, "TOPRIGHT", 0, 0)   -- right edge matches the list below
   if dd.SetValue then dd:SetValue("all") end
+  -- Export sits left of the filter, 8 px apart; the strip slots end at 8 + 4 * SLOT_W, clear of it.
+  local export = k.Button(pane, { text = "Export", width = EXPORT_W, height = 22, skin = UI.SKIN,
+    tooltip = "Copy your duels as a string for the website.", onClick = function() A:Fire("SHOW_EXPORT") end })
+  export:SetPoint("TOPRIGHT", dd, "TOPLEFT", -8, 0)
   local list = k.List(pane, { skin = UI.SKIN, rowHeight = 22, columns = {
     { key = "result", title = "Result", width = 56, kind = "text" },
     { key = "class", title = "", width = 28, kind = "class" },
@@ -59,7 +63,7 @@ local function build(pane)
   if list.SetEmptyText then
     list:SetEmptyText("No duels yet. Challenge someone at the Crossroads or Honor Road.", "Finished duels appear here.")
   end
-  pane.list, pane.values = list, values
+  pane.list, pane.values, pane.export = list, values, export
 
   return function()
     local duels, rows, w, l = UI.Duels(), {}, 0, 0

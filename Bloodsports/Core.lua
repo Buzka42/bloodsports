@@ -52,6 +52,10 @@ function A:OnLogin()
   if MK.Comm then ns.comm = MK.Comm.New(self, ns.PREFIX) end
 end
 
+-- OnLogin runs behind the loading screen where the realm APIs can be unreadable, leaving the identity unresolved.
+-- Re-resolve once the world is loaded (every loading screen): Char() migrates/corrects on its first resolved call.
+A:On("PLAYER_ENTERING_WORLD", function() if A.db then ns.char = A:Char() end end)
+
 -- Appends a duel record, trims history, pushes to the outbox.
 function ns.SaveDuel(rec)
   local list = ns.char.duels
@@ -83,6 +87,7 @@ A:Command("link", "link CODE - bind this character to your World of Meta account
   A:Print("link code stored; sent on next logout or /bs sync.")
 end)
 A:Command("sync", "sync - reload so the Meta Uploader picks up results", function() ReloadUI() end)
+A:Command("export", "export - copy your duels as a string for the site", function() A:Fire("SHOW_EXPORT") end)
 A:Command("venue", "venue - print the venue you are standing in", function()
   local v = ns.venues and ns.venues:Current()
   A:Print(v and (v.name .. " (" .. v.kind .. ")") or "not at a Bloodsports venue")
@@ -91,3 +96,17 @@ A:Command("debug", "debug - toggle debug output", function()
   A.db.config.debug = not A.db.config.debug
   A:Print("debug " .. (A.db.config.debug and "on" or "off"))
 end)
+
+-- Export payload for the website paste box (no uploader needed). Same rule as the uploader: duels travel as rows,
+-- trades and bets stay home. char.key is the SavedVariables key, sent whole. Newest MAX_EXPORT_DUELS duels only.
+ns.MAX_EXPORT_DUELS = 500
+function ns.ExportPayload()
+  local c = ns.char
+  local all, duels = c.duels or {}, {}
+  for i = math.max(1, #all - ns.MAX_EXPORT_DUELS + 1), #all do duels[#duels + 1] = all[i] end
+  return {
+    v = 1, addon = ADDON, install = A.db.installId, ruleset = c.ruleset,
+    char = { key = A.charKey, id = c.id, name = c.name, realm = c.realm, class = c.class, race = c.race, faction = c.faction, level = c.level },
+    streak = c.streak, challenges = c.challenges, duels = duels,
+  }
+end

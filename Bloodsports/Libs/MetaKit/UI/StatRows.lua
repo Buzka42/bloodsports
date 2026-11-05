@@ -19,7 +19,8 @@ function UI.StatRows(parent, o)
   local rowH = o.rowHeight or UI.Metrics.row
   local headGap = o.headerGap or UI.Metrics.sectionGap          -- extra space above each section header
   local railInset = o.railInset or 6        -- gap between the scrollbar and the right edge
-  local bodyInset = railInset + UI.RailWidth + 2
+  local railGap = o.railGap or 2            -- gap between the body (rules, values) and the scrollbar
+  local bodyInset = railInset + UI.RailWidth + railGap
   local f = CreateFrame("Frame", nil, parent)
   f.skin = s
   f:SetSize(o.width or 400, o.height or 300)

@@ -99,4 +99,4 @@ function U.Money(copper)
   return sign .. c .. "c"
 end
 
-math.randomseed(math.floor((GetTime and GetTime() or os.time()) * 1000) % 2147483647)
+-- No math.randomseed: modern clients remove it (nil) and seed the RNG themselves.

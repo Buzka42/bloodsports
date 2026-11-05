@@ -22,7 +22,7 @@ function UI.Session()
 end
 
 function UI.IsHost(s)
-  local key, name = MK.PlayerKey()
+  local key, name = MK.CommKey(), select(2, MK.PlayerKey())
   return s and (UI.SameName(s.host, key) or UI.SameName(s.host, name)) or false
 end
 
@@ -45,7 +45,7 @@ end
 
 local function roster()
   local out = {}
-  local _, me = MK.PlayerKey()
+  local me = MK.CommKey():match("^([^-]+)")
   out[1] = me
   local n = (GetNumGroupMembers and GetNumGroupMembers() or 0) - 1
   for i = 1, n do

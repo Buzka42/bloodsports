@@ -151,7 +151,7 @@ function Comm:OnAddon(prefix, text, channel, sender, target, zoneID, localID, ch
   if MK.IsSecret(prefix) or MK.IsSecret(text) or MK.IsSecret(sender) or MK.IsSecret(channel) then return end
   if prefix ~= self.prefix or type(text) ~= "string" or type(sender) ~= "string" then return end
   sender = MK.FullName(sender)
-  if not sender or sender == MK.PlayerKey() then return end
+  if not sender or MK.IsSelf(sender) then return end
   if flooded(self, sender, GetTime()) then return end
   local fields = split(text)
   local msgType = table.remove(fields, 1)

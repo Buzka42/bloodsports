@@ -44,17 +44,44 @@ local function InitDB(A, globalName, defaults, migrations, charDefaults)
   return db
 end
 
--- Current character record. Identity fields are refreshed on every call that has them readable.
+-- Record for an unresolved identity: the one already in use this session, the stored record whose comm form
+-- matches (exact key, saved comm, or a unique "First Surname" name), else nil.
+local function findUnresolved(A, chars, comm)
+  if A.charKey and chars[A.charKey] then return A.charKey end
+  if chars[comm] then return comm end
+  local first, slot = comm:match("^([^-]*)%-(.*)$")
+  local hit
+  for k, c in pairs(chars) do
+    if type(c) == "table" and (c.comm == comm or (first and c.name == first .. " " .. slot)) then
+      if hit then return nil end -- ambiguous: never guess between characters
+      hit = k
+    end
+  end
+  return hit
+end
+
+-- Current character record. Identity fields (name/realm/key) are written only from a resolved identity; until
+-- then the record is found by its comm form or created under CommKey, and migrated on the first resolved call.
 local function Char(A)
-  local key, name, realm = MK.PlayerKey()
+  local key, name, realm, resolved = MK.PlayerKey()
   local chars = A.db.chars
+  local comm = MK.CommKey()
+  if not resolved then
+    key = findUnresolved(A, chars, comm) or comm
+  elseif comm ~= key and chars[comm] and not chars[key] then
+    chars[key], chars[comm] = chars[comm], nil -- surname fix: keep the record (and its id) under the new key
+  end
   local c = chars[key]
   if not c then
     c = { id = U.RandomHex(32), created = U.ServerTime() }
     chars[key] = c
+    if not resolved then c.name, c.unresolved = name, true end
   end
   U.EnsureShape(c, A.charDefaults)
-  c.name, c.realm, c.ruleset = name, realm, MK.Ruleset()
+  if resolved then
+    c.name, c.realm, c.comm, c.unresolved = name, realm, comm, nil
+  end
+  c.ruleset = MK.Call(GetRealmName) or c.ruleset or "?"
   local _, class = MK.Call(UnitClass, "player")
   local _, race = MK.Call(UnitRace, "player")
   c.class = class or c.class

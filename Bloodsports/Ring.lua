@@ -65,7 +65,7 @@ local function num(s, lo, hi)
   return U.Clamp(math.floor(n), lo, hi)
 end
 
-local function me() return (MK.PlayerKey()) end
+local function me() return MK.CommKey() end
 
 local function inGroup(name)
   if not name then return false end

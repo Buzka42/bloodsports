@@ -113,6 +113,8 @@ end
 ---------------------------------------------------------------------------
 -- Button
 
+local BTN_MIN_W, BTN_PAD_X = 60, 12 -- auto-width buttons: minimum width, label padding each side
+
 local function darker(c, d)
   return { max(0, c[1] - d), max(0, c[2] - d), max(0, c[3] - d), c[4] }
 end
@@ -171,15 +173,31 @@ function UI.Button(parent, o)
   icon:SetTexCoord(0.08, 0.92, 0.08, 0.92)
   b.icon = icon
 
+  -- Auto-width buttons (no o.width) size to their label and anchor it on one side only, so the label is never
+  -- width-constrained and cannot truncate. Fixed-width buttons keep the two-sided anchor (caller owns the width).
+  local auto = not o.width
+  local hasIcon = false
+  local function fit()
+    if not auto then return end
+    local sw = math.ceil(label:GetStringWidth() or 0)
+    b:SetWidth(max(BTN_MIN_W, sw + BTN_PAD_X * 2 + (hasIcon and (h - 2 - BTN_PAD_X) or 0)))
+  end
   local function layout()
-    local hasIcon = b.iconTexture ~= nil
+    hasIcon = b.iconTexture ~= false and b.iconTexture ~= nil
     icon:SetShown(hasIcon)
     if hasIcon then icon:SetTexture(b.iconTexture) end
     label:ClearAllPoints()
-    label:SetPoint("LEFT", b, "LEFT", hasIcon and (h - 2) or 6, 0)
-    label:SetPoint("RIGHT", b, "RIGHT", -6, 0)
+    if auto and hasIcon then
+      label:SetPoint("LEFT", b, "LEFT", h - 2, 0)
+    elseif auto then
+      label:SetPoint("CENTER", b, "CENTER", 0, 0)
+    else
+      label:SetPoint("LEFT", b, "LEFT", hasIcon and (h - 2) or 6, 0)
+      label:SetPoint("RIGHT", b, "RIGHT", -6, 0)
+    end
+    fit()
   end
-  function b:SetText(t) label:SetText(t or "") end
+  function b:SetText(t) label:SetText(t or ""); fit() end
   function b:GetText() return label:GetText() end
   function b:SetIcon(tex) self.iconTexture = tex or false; layout(); paintButton(self) end
   function b:SetActive(v) self.active = v and true or false; paintButton(self) end
@@ -194,9 +212,6 @@ function UI.Button(parent, o)
   b:RegisterForClicks("LeftButtonUp")
   b:SetText(o.text)
   layout()
-  if not o.width and o.text then
-    b:SetWidth(max(60, label:GetStringWidth() + 24 + (o.icon and h or 0)))
-  end
   b:SetScript("OnEnter", function(self)
     self.hover = true
     paintButton(self)

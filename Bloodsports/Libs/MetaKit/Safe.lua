@@ -81,19 +81,53 @@ function MK.HealthPct(unit)
   end
 end
 
--- "Name-Realm" for the player; realm falls back to the normalized realm name (Forever may be realmless).
+local function squash(s) return (s:gsub("%s", "")) end
+
+-- Player identity. WoW Forever puts a 2-part character's surname in UnitFullName's realm slot
+-- (("Chad","Gippity") on realm "CAMWOWEU4Realm2PvP"): a slot matching no readable realm form is a surname.
+-- Returns name, realm, comm ("Name-Slot", how WoW itself names the player in addon-message senders), resolved.
+-- resolved is false while the player name or both realm APIs are unreadable (load time, secret scrub): the slot
+-- can then be neither a surname nor a realm, so realm is nil and callers must not persist name/realm.
+local function identity()
+  local first, slot = MK.Call(UnitFullName, "player")
+  first = first or MK.Call(UnitName, "player")
+  if slot == "" then slot = nil end
+  local norm, label = MK.Call(GetNormalizedRealmName), MK.Call(GetRealmName)
+  local realm = norm or label
+  local comm = (first or "Unknown") .. "-" .. (slot or realm or "Realm")
+  if not first or not realm then return first or "Unknown", nil, comm, false end
+  if slot and squash(slot) ~= squash(norm or "") and squash(slot) ~= squash(label or "") then
+    return first .. " " .. slot, realm, comm, true
+  end
+  return first, slot or realm, comm, true
+end
+
+-- "Name-Realm" for the player (storage / site identity); Name may be "First Surname" on Forever.
+-- Returns key, name, realm, resolved. Unresolved: key is CommKey (the legacy key, migrated by Char once the
+-- identity resolves) and realm is the "Realm" placeholder; never persist either.
 function MK.PlayerKey()
-  local name, realm = MK.Call(UnitFullName, "player")
-  name = name or MK.Call(UnitName, "player") or "Unknown"
-  realm = (realm and realm ~= "") and realm or MK.Call(GetNormalizedRealmName) or MK.Call(GetRealmName) or "Realm"
-  return name .. "-" .. realm, name, realm
+  local name, realm, comm, resolved = identity()
+  if not resolved then return comm, name, "Realm", false end
+  return name .. "-" .. realm, name, realm, true
+end
+
+-- The player's own name as WoW reports it to peers (comm sender form); also the pre-surname-fix PlayerKey.
+function MK.CommKey()
+  local _, _, comm = identity()
+  return comm
+end
+
+-- True when a (normalized) comm sender is the player.
+function MK.IsSelf(sender)
+  return sender ~= nil and (sender == MK.CommKey() or sender == (MK.PlayerKey()))
 end
 
 -- Normalizes "Name" or "Name-Realm" to "Name-Realm" using the player's realm.
 function MK.FullName(name)
   if not name or name == "" then return nil end
   if name:find("-", 1, true) then return name end
-  local _, _, realm = MK.PlayerKey()
+  local _, _, realm, resolved = MK.PlayerKey()
+  if not resolved then realm = MK.CommKey():match("%-(.*)$") end -- the slot, as WoW names same-realm peers
   return name .. "-" .. realm
 end
 

@@ -2,7 +2,7 @@
 ## Title: |cffd1381fBloodsports|r
 ## Notes: Duels, fight clubs and goblin gambling rings: tracking, opponent finder, champions, referees. Feeds World of Meta.
 ## Author: World of Meta
-## Version: 0.1.0
+## Version: 1.0.0
 ## SavedVariables: BloodsportsDB
 ## OptionalDeps: WorldOfMeta_Data
 ## IconTexture: Interface\AddOns\Bloodsports\Media\icon_bloodsports
@@ -51,3 +51,4 @@ UI\DuelCard.lua
 UI\Toasts.lua
 UI\Tooltip.lua
 UI\Minimap.lua
+UI\Export.lua
