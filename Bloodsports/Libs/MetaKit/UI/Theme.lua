@@ -60,6 +60,127 @@ local function hex(h, a)
   return { tonumber(h:sub(1, 2), 16) / 255, tonumber(h:sub(3, 4), 16) / 255, tonumber(h:sub(5, 6), 16) / 255, a or 1 }
 end
 
+-- Site palette for the integrated Shell (MK.UI.Shell). Separate from UI.Tokens, which the flat widgets depend on.
+UI.SiteTokens = {
+  stone0 = hex("0b0806"), stone1 = hex("140f0b"), stone2 = hex("1f1710"), stone3 = hex("2c2117"),
+  stoneEdge = hex("3d2e20"), gold = hex("f8d16b"), goldDeep = hex("b8862b"), goldDim = hex("8a6a2e"),
+  parch = hex("e8d5a8"), inkRed = hex("7a1a12"), emerald = hex("3fbf6a"), silver = hex("c9ccd3"),
+  -- code-drawn plates (WHITE8X8 + vertex colours), measured from the reference addon
+  plateGoldTop = { 1.00, 0.86, 0.42, 1 }, plateGoldBottom = { 0.74, 0.55, 0.08, 1 }, plateGoldEdge = { 0.34, 0.24, 0.02, 1 },
+  plateGoldHover = { 1, 0.86, 0.42, 0.35 }, plateGoldLabel = { 0.13, 0.09, 0.01, 1 },
+  plateDarkFill = { 0.08, 0.07, 0.06, 0.92 }, plateDarkEdge = { 1, 1, 1, 0.12 },
+  -- dark plate label raised from (1, 0.86, 0.45) for contrast on the near-black fill (the reference value stays as
+  -- plateDarkLabelRef); the gold plate gets a 1 px top highlight and a 1 px darker bottom shade inside its edge
+  plateDarkLabel = { 1, 0.90, 0.55, 1 }, plateDarkLabelRef = { 1, 0.86, 0.45, 1 },
+  plateGoldHighlight = { 1, 1, 0.86, 0.5 }, plateGoldShade = { 0.50, 0.36, 0.04, 1 },
+  -- list zebra (UI.List o.zebra): low-alpha stone bands on the dark pane
+  rowEven = { 0x2c / 255, 0x21 / 255, 0x17 / 255, 0.45 }, rowOdd = { 0x0b / 255, 0x08 / 255, 0x06 / 255, 0.25 },
+  title = { 1, 0.82, 0, 1 }, titleShadow = { 0, 0, 0, 0.85 },
+  -- v3: list separators (#4a351d @ 55%), ink for text on parchment, the parchment darkening tint (~18%)
+  -- v5: parchTint 0.82 -> 0.92: dark ink needs a lighter ground (it4 crop: ~2.4:1 effective on the 0.82 tan)
+  -- v9: parchTint 0.92 -> 0.87: the sidebar read brighter than the main pane and pulled the eye left (it8); the labels
+  -- are #21150d since v7, so the it5 contrast margin covers the darker ground
+  listSep = hex("4a351d", 0.55), ink = hex("2a1a0c"), inkSoft = hex("5a4026"), parchTint = { 0.87, 0.87, 0.87, 1 },
+  -- v4: every text colour on the parchment sidebar is dark ink at full alpha (light or grey text on tan read as
+  -- disabled in it3). Shell o.sidebarInk = { key = colour } overrides single keys. A flat sidebar keeps light text.
+  sidebarInk = {
+    label = hex("21150d"),        -- section label base ink
+    labelSoft = hex("3a2810"),    -- unselected section label. v5: 4a3418 -> 3a2810; the it4 crop showed 4a3418
+                                  -- reaching the glyphs but blending to #59401e (light taupe) at ~83% AA coverage
+    selected = hex("0e0904"),     -- selected section label, on the gold strip + wash
+    -- v7: 3a2810 -> 21150d. it6 pixel samples had the 3a2810 labels rendering LIGHTER than the green values (taupe)
+    summaryLabel = hex("21150d"), -- summary block labels (Record, Win rate, ...)
+    value = hex("21150d"),        -- summary values
+    -- v6: good 1f7a12 -> 14550c (it5: W letters / win rate measured ~1.4-1.8:1 on the tan); bad stays 8c1d10
+    good = hex("14550c"), bad = hex("8c1d10"), -- semantic green / red darkened for parchment
+    -- v6: the "gold" / focal summary value (money: Net purse) is value ink; 6a4708 rendered pale gold-grey in it5
+    focal = hex("21150d"),
+    rule = hex("3a2810", 0.6),    -- 1 px ink rule above the summary block
+    heading = hex("6e130c"),      -- v5: the tab heading (BLOODSPORTS) in ink-red darkened for parchment
+    -- v6: the 3 px selection strip on parchment. goldDeep (b8862b) sat at the parchment's own luminance (invisible
+    -- in it5); dark bronze gold reads as a strip on the tan
+    strip = hex("6a4708"),
+  },
+  -- v7: the sidebar SUMMARY block's own parchment palette (Shell builds shell.summaryInk from it; o.sidebarInk's
+  -- summaryLabel / value / good / bad / focal still override). Never the dark-pane tokens (muted / parch / emerald).
+  summaryInk = {
+    label = hex("21150d"), value = hex("21150d"), good = hex("14550c"), bad = hex("8c1d10"), focal = hex("21150d"),
+  },
+  summarySize = 12,               -- v7: summary label / value px on parchment (forced, not the font object's size)
+  -- v6: selected nav row wash on parchment (was black @ 0.14, read as weak on the Elders sidebar)
+  parchSelWash = { 0, 0, 0, 0.22 },
+}
+
+-- Shell metrics (Talents Forever): margin, gap, title band, tab strip, sidebar, row, button, default size, cover art.
+-- v2: title 20 (Cinzel Bold, shadow 2,-2), tabs 24 high / min 110 wide / 16 px label padding / 2 px pane overlap,
+-- compact window 820 x 520 with a 220 px sidebar.
+-- v3: gap 10 -> 8 (4/8/12/16 spacing grid); depth chrome (o.chrome): 12 px band, 8 px extra body inset, 4 px well
+-- rim; material sidebar (o.sidebar): 26 px rows, 16 px icons, 3 px selection strip; summary lines 16 px.
+-- v4: active tab 28 / inactive 24 with 12 px labels; corner brackets 24; drop shadow 6 px larger, 6 px down, 45%
+-- (dialog / flat chrome); summary block 8 px above the footer; proportional scroll thumb 10 px wide, min 24.
+UI.ShellMetrics = { margin = 12, gap = 8, titleBand = 50, tabStrip = 25, sidebar = 340, row = 22, button = 24,
+  width = 900, height = 600, corner = 64, grain = 128,
+  titleSize = 20, titleShadowX = 2, titleShadowY = -2,
+  tab = 28, tabInactive = 24, tabMin = 110, tabPad = 16, tabOverlap = 2, tabGap = 4, tabLabel = 12,
+  compactWidth = 820, compactHeight = 520, compactSidebar = 220,
+  band = 12, depthInset = 8, wellPad = 4, bracket = 24,
+  shadowGrow = 6, shadowDrop = 6, shadowAlpha = 0.45,
+  navRow = 26, navIcon = 16, navStrip = 3, summaryLine = 16, summaryGap = 8,
+  thumbTrack = 10, thumbMin = 24 }
+
+---------------------------------------------------------------------------
+-- Probes (probe first, degrade silently). Results are cached per path / template name.
+
+local texProbe, texCache, tplCache = nil, {}, {}
+
+-- True when a Blizzard texture file exists: GetFileIDFromPath names it, or a hidden probe texture takes it
+-- (SetTexture neither raises nor returns false, and GetTextureFileID, when present, names a file).
+function UI.ProbeTexture(path)
+  if type(path) ~= "string" or path == "" then return false end
+  local cached = texCache[path]
+  if cached ~= nil then return cached end
+  local found = false
+  if type(GetFileIDFromPath) == "function" then
+    local ok, id = pcall(GetFileIDFromPath, path)
+    found = ok and id ~= nil and id ~= 0
+  end
+  if not found then -- no path API, or it said no: the probe texture has the last word
+    if not texProbe and UIParent and UIParent.CreateTexture then
+      local ok, t = pcall(UIParent.CreateTexture, UIParent, nil, "BACKGROUND")
+      if ok and t then texProbe = t; pcall(t.Hide, t) end
+    end
+    local t = texProbe
+    if t then
+      local ok, res = pcall(t.SetTexture, t, path)
+      found = ok and res ~= false
+      if found and type(t.GetTextureFileID) == "function" then
+        local okId, id = pcall(t.GetTextureFileID, t)
+        if okId and (id == nil or id == 0) then found = false end
+      end
+      pcall(t.SetTexture, t, nil)
+    end
+  end
+  texCache[path] = found
+  return found
+end
+
+-- true / false when the client can say whether an XML template exists (C_XMLUtil.GetTemplateInfo), nil when it
+-- cannot (the caller then tries CreateFrame under pcall).
+function UI.HasTemplate(name)
+  if type(name) ~= "string" then return false end
+  if tplCache[name] ~= nil then return tplCache[name] end
+  local fn = C_XMLUtil and C_XMLUtil.GetTemplateInfo
+  if type(fn) ~= "function" then return nil end
+  local ok, info = pcall(fn, name)
+  local has = ok and info ~= nil
+  tplCache[name] = has
+  return has
+end
+
+function UI.ResetProbes()
+  texProbe, texCache, tplCache = nil, {}, {}
+end
+
 local COLOR_KEYS = { "bg", "panel", "edge", "accent", "title", "text", "muted", "good", "bad", "rowEven", "rowOdd", "divider" }
 local ART_KEYS = { "tile", "header", "footer", "logo", "icon", "portrait", "bannerGood", "bannerBad", "glyphFull", "glyphEmpty" }
 UI.ColorKeys, UI.ArtKeys = COLOR_KEYS, ART_KEYS

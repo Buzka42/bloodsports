@@ -3,6 +3,7 @@
 local T = dofile(os.getenv("WOW_STUB") or "tests/wow_stub.lua")
 GetChannelName = function() return 5 end
 local ns = T.LoadAddon("Bloodsports/Bloodsports.toc")
+C_AddOns.IsAddOnLoaded = function(n) return n == "Bloodsports" end   -- the stub says nothing is loaded; the shell gates tabs on it
 local A = ns.A
 local function sentOf(kind)
   local out = {}
@@ -45,7 +46,7 @@ T.test("main window: every tab", function()
     A:Fire("TOGGLE_MAIN", tab)
     T.Advance(0.2)
   end
-  T.ok(_G.BloodsportsMain and BloodsportsMain:IsShown(), "main shown")
+  T.ok(_G.WorldOfMetaShell and WorldOfMetaShell:IsShown(), "main shown")
   T.noErrors()
 end)
 
@@ -89,7 +90,9 @@ T.test("ring at Ratchet: host opens, bettor bets, stake traded, verdict pays out
   T.ok(ns.Ring.Lock(), "locked")
   T.Fire("CHAT_MSG_SYSTEM", "Ogg has defeated Zug in a duel")
   T.Advance(1)
-  T.eq(s.status, "settled")
+  T.eq(ns.Ring.Market("m1", s).status, "resolving", "§2.2 appeal window")
+  T.Advance(601)
+  T.eq(ns.Ring.Market("m1", s).status, "settled")
   T.eq(s.bets[1].payout, 50000, "sole bettor on the winner gets stake back (no losers)")
   A:Fire("TOGGLE_MAIN", "ring"); T.Advance(0.5)
   T.noErrors()
@@ -105,12 +108,13 @@ T.test("ring: fighter's countdown auto-locks the host; mid-session joiner gets b
   T.Advance(1)
   local before = #T.sent
   T.Deliver("BSPT", "RQ\t" .. s.id, "WHISPER", "Gambler-Normal")
-  T.Advance(2)
+  T.Advance(10) -- drain R2* and v1 resync traffic through the shared comm queue
   local lines = 0
   for i = before + 1, #T.sent do if T.sent[i].msg:match("^RL\t") and T.sent[i].target == "Gambler-Normal" then lines = lines + 1 end end
   T.eq(lines, 1, "bet line whispered on resync")
   T.Deliver("BSPT", "RF\t" .. s.id, "WHISPER", "Ogg-Normal")
-  T.eq(s.status, "locked", "auto-locked by fighter countdown")
+  T.eq(ns.Ring.Market("m1", s).status, "locked", "auto-locked by fighter countdown")
+  T.eq(s.status, "open", "session remains open while its market is locked")
   local verdictRows = 0
   for _, r in ipairs(BloodsportsDB.outbox.rows) do if r.kind == "ring" and r.data.event == "verdict" then verdictRows = verdictRows + 1 end end
   T.eq(verdictRows, 1, "earlier session pushed one verdict row")

@@ -2,7 +2,7 @@
 -- Each addon ships its own copy under Libs/MetaKit. The newest MINOR wins; an equal or older
 -- copy sets MetaKit_SkipLoad so the rest of its files return immediately.
 
-local MINOR = 1
+local MINOR = 2
 if MetaKit and MetaKit.minor >= MINOR then
   MetaKit_SkipLoad = true
   return

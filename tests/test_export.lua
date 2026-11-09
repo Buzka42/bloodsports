@@ -3,6 +3,7 @@
 local T = dofile(os.getenv("WOW_STUB") or "tests/wow_stub.lua")
 T.units.player.realm = "Gippity"
 local ns = T.LoadAddon("Bloodsports/Bloodsports.toc")
+C_AddOns.IsAddOnLoaded = function(n) return n == "Bloodsports" end   -- the stub says nothing is loaded; the shell gates tabs on it
 local MK = MetaKit
 local A = ns.A
 

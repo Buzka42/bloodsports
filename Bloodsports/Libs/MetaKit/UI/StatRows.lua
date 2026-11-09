@@ -1,6 +1,11 @@
 -- UI kit: StatRows, a scrollable list of titled sections with icon / label / sub / right-aligned value rows.
 -- Entries have different heights (section header vs stat row), so the scroll offset is in pixels and the
 -- pooled row frames are rebound to whichever entries intersect the viewport.
+--
+-- v3 (optional): o.valueWidth fixes the value column (right-aligned, 60-90 px for the shell look; the label takes the
+-- rest, 12 px gap) instead of 38% of the row. Row colours: "good" / "bad" (skin semantic: emerald / ink-red),
+-- "focal" or "gold" (SiteTokens.gold: one focal value per section), anything else plain text.
+-- v7 (optional): o.subColor = {r,g,b,a} for the small sub-line under a label (default: the skin's muted, unchanged).
 
 if MetaKit_SkipLoad then return end
 local MK = MetaKit
@@ -21,6 +26,8 @@ function UI.StatRows(parent, o)
   local railInset = o.railInset or 6        -- gap between the scrollbar and the right edge
   local railGap = o.railGap or 2            -- gap between the body (rules, values) and the scrollbar
   local bodyInset = railInset + UI.RailWidth + railGap
+  local valueW = tonumber(o.valueWidth)
+  local subColor = type(o.subColor) == "table" and o.subColor or nil
   local f = CreateFrame("Frame", nil, parent)
   f.skin = s
   f:SetSize(o.width or 400, o.height or 300)
@@ -111,27 +118,36 @@ function UI.StatRows(parent, o)
       row.icon:Hide()
     end
     local w = viewW()
+    local vw = valueW or w * 0.38
     row.label:Show()
     row.label:ClearAllPoints()
-    row.label:SetWidth(max(40, w - x - w * 0.38 - 12))
+    row.label:SetWidth(max(40, w - x - vw - 12))
     row.label:SetText(e.label or "")
     row.value:Show()
-    row.value:SetWidth(w * 0.38)
+    row.value:SetWidth(vw)
     row.value:SetText(e.value ~= nil and tostring(e.value) or "")
-    row.value:SetTextColor(UI.Color(s, e.color or "text")) -- "good" / "bad" only when the caller passes them
+    if (e.color == "focal" or e.color == "gold") and UI.SiteTokens then
+      row.value:SetTextColor(UI.Unpack(UI.SiteTokens.gold))
+    else
+      row.value:SetTextColor(UI.Color(s, e.color or "text")) -- "good" / "bad" only when the caller passes them
+    end
     if e.sub and e.sub ~= "" then
       row.label:SetPoint("LEFT", row, "LEFT", x, 6)
       row.sub:Show()
       row.sub:ClearAllPoints()
       row.sub:SetPoint("LEFT", row, "LEFT", x, -8)
-      row.sub:SetWidth(max(40, w - x - w * 0.38 - 12))
+      row.sub:SetWidth(max(40, w - x - vw - 12))
       row.sub:SetText(e.sub)
+      if subColor then row.sub:SetTextColor(UI.Unpack(subColor)) end -- every bind: the final colour is o.subColor
     else
       row.label:SetPoint("LEFT", row, "LEFT", x, 0)
       row.sub:Hide()
     end
   end
 
+  f.valueWidth = valueW or false
+  f.subColor = subColor or false
+  f.rowHeight = rowH -- o.rowHeight (default UI.Metrics.row); v6: the shell demo stat pages use 28
   function f:GetPoolSize() return #self.rows end
   function f:GetContentHeight() return self.contentH end
   function f:GetOffset() return self.offset end

@@ -34,7 +34,9 @@ local function show(rec)
   local opp = rec.opp or {}
   if card.icon.SetClass then card.icon:SetClass(opp.class) end
   card.name:SetText(UI.ClassText(opp.class, opp.name and UI.Short(opp.name) or "Unknown challenger"))
-  card.line1:SetText((opp.level and ("Level " .. opp.level) or "Level ?") .. "  -  " .. UI.VenueName(rec.venue))
+  local ser = ns.Series and ns.Series.Describe()
+  card.line1:SetText((opp.level and ("Level " .. opp.level) or "Level ?") .. "  -  " .. UI.VenueName(rec.venue)
+    .. (ser and ("  -  " .. ser) or ""))
   local st = ns.char and ns.char.streak or {}
   local atStake = (rec.venue and st.venue and st.venue[rec.venue]) or st.cur or 0
   local w, l = UI.RecordVs(opp.name)

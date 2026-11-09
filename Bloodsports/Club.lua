@@ -76,6 +76,12 @@ local function openChallengeAt(venueId)
   end
 end
 
+-- The open challenge whose champion is oppName (short-name match), or nil. Series.lua uses it to force bo5.
+function Club.OpenChallengeAgainst(venueId, oppName)
+  local c = openChallengeAt(venueId)
+  if c and c.champion ~= "" and shortName(c.champion) == shortName(oppName) then return c end
+end
+
 -- ok, reason, champion. reason: "challenge" | "claim" | "streak" | "champion" | "open" | "venue".
 function Club.CanChallenge(venueId)
   local v = ns.venues and ns.venues:Get(venueId)
@@ -164,6 +170,7 @@ end
 -- A resolved duel against the champion closes my open challenge.
 local function onDuel(rec)
   if type(rec) ~= "table" or type(rec.opp) ~= "table" or rec.result == "void" then return end
+  if type(rec.series) == "table" and rec.series.champion then return end -- a bo5 round: SERIES_DONE closes the challenge
   for _, c in pairs(ns.char.challenges) do
     if c.status == "open" and c.venue == rec.venue and c.champion ~= ""
         and shortName(c.champion) == shortName(rec.opp.name) then
@@ -175,7 +182,20 @@ local function onDuel(rec)
   A:Fire("CLUB_UPDATED")
 end
 
+-- A champion bo5 ends: winner = me closes the challenge "won", the other side "lost"; a void series leaves it open.
+local function onSeriesDone(ev)
+  if type(ev) ~= "table" or not ev.champion or not ev.challenge or not ev.winner then return end
+  local c = ns.char.challenges[ev.challenge]
+  if not c or c.status ~= "open" then return end
+  c.status = ev.winner == ev.a and "won" or "lost"
+  c.series = ev.id
+  c.resolvedAt = U.ServerTime()
+  A:Push("challenge", c)
+  A:Fire("CLUB_UPDATED")
+end
+
 function M:OnLogin()
+  A:Listen("SERIES_DONE", onSeriesDone)
   if ns.comm then ns.comm:On("CC", onChallenged) end
   A:Listen("DUEL_RESOLVED", onDuel)
   A:Listen("DUEL_CONFIRMED", function() A:Fire("CLUB_UPDATED") end)

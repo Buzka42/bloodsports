@@ -168,6 +168,7 @@ T.test("win and loss: host emits a row per bet; unpaid gold bet is void", functi
   trade("Bob", 200000, 0)              -- Carl never pays
   local from = mark()
   T.ok(R.Verdict("Fa"))
+  T.Advance(601) -- §2.2: bet rows are written when resolving becomes settled
   local rows = betRows(from)
   T.eq(#rows, 3)
   local by = {}
@@ -191,6 +192,7 @@ T.test("bet row fields are present and typed; no venue gives nil", function()
   trade("Alice", 100000, 0)
   local from = mark()
   T.ok(R.Verdict("Fa"))
+  T.Advance(601) -- §2.2: bet rows are written when resolving becomes settled
   local rows = betRows(from)
   T.eq(#rows, 1)
   local r = rows[1]
@@ -202,14 +204,16 @@ T.test("bet row fields are present and typed; no venue gives nil", function()
   T.ok(r.result == "win" or r.result == "loss" or r.result == "void", "result")
   T.eq(r.venue, nil, "no venue -> nil")
   T.ok(type(r.t) == "number", "t is a number")
-  local n = 0
-  for _ in pairs(r) do n = n + 1 end
-  T.eq(n, 7, "venue absent when nil; seven fields")
+  T.eq(r.schema, 2, "v2 schema (§5.1)")
+  T.eq(r.currency, "gold"); T.eq(r.market, "m1"); T.eq(r.kind, "winner"); T.eq(r.mode, "pari")
+  T.eq(r.outcome, 1); T.eq(r.outcomeCount, 2); T.eq(r.marketResult, 1)
+  T.eq(r.price, 0); T.eq(r.paid, true); T.eq(r.payout, 100000)
+  T.ok(type(r.fight) == "number" and r.fight > 0, "fight sequence is present")
   R.Close()
   setBookie("Tester-Normal", nil)
 end)
 
-T.test("points sessions emit no bet rows", function()
+T.test("points sessions emit schema-2 bet rows", function()
   A.db.config.ring.currency = "points"
   setBookie("Tester-Normal", 5)
   party("Alice")
@@ -218,8 +222,11 @@ T.test("points sessions emit no bet rows", function()
   bet("Alice-Normal", "Fa", "5")
   local from = mark()
   T.ok(R.Verdict("Fa"))
-  T.eq(#betRows(from), 0)
-  T.eq(s.status, "settled")
+  T.Advance(601)
+  local rows = betRows(from)
+  T.eq(#rows, 1, "§5.1: points rows are emitted too")
+  T.eq(rows[1].schema, 2); T.eq(rows[1].currency, "points"); T.eq(rows[1].result, "win")
+  T.eq(R.Market("m1", s).status, "settled")
   R.Close()
   setBookie("Tester-Normal", nil)
   A.db.config.ring.currency = "gold"

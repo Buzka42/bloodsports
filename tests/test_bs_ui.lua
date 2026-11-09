@@ -2,6 +2,7 @@
 -- when MetaKit.UI.Window is absent, so the UI code is exercised before the real kit lands.
 local T = dofile(os.getenv("WOW_STUB") or "tests/wow_stub.lua")
 local ns = T.LoadAddon("Bloodsports/Bloodsports.toc", { login = false })
+C_AddOns.IsAddOnLoaded = function(n) return n == "Bloodsports" end   -- the stub says nothing is loaded; the shell gates tabs on it
 local MK = MetaKit
 local A = ns.A
 
@@ -45,9 +46,9 @@ if fake then
   function UI.List(p) local f = frame(p); f.data = {}; function f:SetData(d) self.data = d end; return f end
 end
 -- Record every widget the UI creates (wrapping real or fake constructors).
-for name, bucket in pairs({ Button = "buttons", Dropdown = "dropdowns", Checkbox = "checks", EditBox = "edits", List = "lists" }) do
+for name, bucket in pairs({ Button = "buttons", Plate = "buttons", Dropdown = "dropdowns", Checkbox = "checks", EditBox = "edits", List = "lists" }) do
   local orig = UI[name]
-  UI[name] = function(p, o) local f = orig(p, o); f._opts = o; table.insert(made[bucket], f); return f end
+  if orig then UI[name] = function(p, o) local f = orig(p, o); f._opts = o; table.insert(made[bucket], f); return f end end
 end
 do
   local origC, origT = UI.Confirm, UI.Toast
@@ -185,18 +186,26 @@ T.test("ring tab: referee list, then host and bettor session views, HUD", functi
   for _, f in ipairs(UIParent._children) do if f.pot then hud = f end end
   T.ok(hud and hud:IsShown(), "hud shown")
   T.ok(hud.pot:GetText():find("5g"), "pot text " .. tostring(hud.pot:GetText()))
-  for _, b in ipairs(made.buttons) do if b._opts.text == "Place bet" then b:Click() end end   -- no amount: just prints
+  for _, b in ipairs(made.buttons) do if b._opts.text == "Place bet" then b:Click() end end   -- no outcome / amount: no call
+  T.eq(#ns.Ring.calls, 0, "no bet without outcome and amount")
+  local outs
+  for _, l in ipairs(made.lists) do if l._opts.columns[1].title == "Outcome" and l._opts.columns[2].title == "Odds" then outs = l end end
+  T.ok(outs and #outs.data == 2, "two outcomes from the v1 session")
+  outs._opts.onRowClick(outs.data[1])
+  local money = GetMoney
+  GetMoney = function() return 1000000 end   -- the slip refuses stakes above the purse
   for _, e in ipairs(made.edits) do if e._opts.placeholder == "Amount" then e._opts.onChange("2") end end
   for _, b in ipairs(made.buttons) do if b._opts.text == "Place bet" then b:Click() end end
   if fakes.ring then
     local c = ns.Ring.calls[#ns.Ring.calls]
     T.eq(c[1], "PlaceBet"); T.eq(c[2], "Aaa-Normal"); T.eq(c[3], 20000)
   end
+  GetMoney = money
   -- host view
   ns.Ring.session.host = "Tester-Normal"
   T.units.player = T.units.player or {}
   A:Fire("RING_UPDATED"); T.Advance(1)
-  for _, name in ipairs({ "Lock bets", "A wins", "B wins", "Void", "Close ring" }) do
+  for _, name in ipairs({ "Lock", "Verdict", "Void", "Close ring" }) do
     for _, b in ipairs(made.buttons) do if b._opts.text == name then b:Click() end end
   end
   if fakes.ring then

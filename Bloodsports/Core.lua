@@ -12,12 +12,21 @@ Bloodsports = A -- global for debugging (/dump Bloodsports.db)
 ns.PREFIX = "BSPT"
 ns.VERSION = 1
 
+-- Narrator.lua's chat table (MK.Chat shape). Route "channel" speaks in the ring's own channel.
+local function chatDefaults()
+  if not MK.Chat then return {} end
+  local c = MK.Chat.Defaults("bloodsports", { level = "headline" })
+  c.channelName = "WoMRing"
+  return c
+end
+
 local DEFAULTS = {
   config = {
     card = true, toasts = true, announce = true,
-    ring = { enabled = true, currency = "gold" },   -- currency "gold" | "points" (fallback if gold betting gets banned)
+    ring = { enabled = true, currency = "gold", channel = true, public = true, autoInvite = false },
     finder = { autoListAtVenue = false },
     referee = { available = false },               -- I'm offering to referee
+    chat = chatDefaults(),
   },
   peers = {},       -- ["Name-Realm"] = { class, level, version, seen }   addon users met via comm
   referees = {},    -- ["Name-Realm"] = { seen, rating }                 referees heard on the lobby
@@ -29,6 +38,7 @@ local CHAR_DEFAULTS = {
   challenges = {},  -- [id] = challenge record
   bets = {},        -- array of bet/ring records
   trades = {},      -- array of recorded trades (ring settlement evidence)
+  ring = { v = 2, fightSeq = 0, debts = {}, unmatched = {} },
 }
 ns.MAX_DUELS = 1000
 

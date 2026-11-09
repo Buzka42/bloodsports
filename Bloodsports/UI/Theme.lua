@@ -105,19 +105,49 @@ function UI.Currency()
   return (r and r.currency) or "gold"
 end
 
-function UI.Amount(v, currency)
-  v = tonumber(v) or 0
-  if (currency or UI.Currency()) == "points" then return v .. " pts" end
-  return MK.Util.Money(v)
+-- Compact money (contract §7: "34g 47s 05c", copper only when non-zero, "34g 47s", "50s"): the kit's demo formatter
+-- when present, else MK.Util.Money.
+function UI.Money(copper)
+  local f = MK.UI and MK.UI.ChromeDemoMoney
+  if f then
+    local ok, txt = pcall(f, copper)
+    if ok and type(txt) == "string" then return txt end
+  end
+  return MK.Util.Money(copper)
 end
 
--- "10" typed by the user -> internal amount (copper for gold, raw for points).
-function UI.ParseAmount(text, currency)
-  local n = tonumber(text)
-  if not n or n <= 0 then return nil end
-  if (currency or UI.Currency()) == "points" then return math.floor(n) end
-  return math.floor(n * 10000)
+function UI.Amount(v, currency)
+  v = tonumber(v) or 0
+  if (currency or UI.Currency()) == "points" then return math.floor(v) .. " pts" end
+  return UI.Money(v)
 end
+
+-- Typed amount -> internal amount (copper for gold, raw for points). Gold takes "12", "12.5", "12g 50s", "50s", "3g33s33c".
+function UI.ParseMoney(text, currency)
+  text = tostring(text or ""):lower():gsub("^%s+", ""):gsub("%s+$", "")
+  if text == "" then return nil end
+  if (currency or UI.Currency()) == "points" then
+    local n = tonumber((text:gsub("%s*pts?$", "")))
+    n = n and math.floor(n)
+    return n and n > 0 and n or nil
+  end
+  local n = tonumber(text)
+  if n then
+    n = math.floor(n * 10000 + 0.5)
+    return n > 0 and n or nil
+  end
+  local total, any = 0, false
+  local rest = text:gsub("(%d+%.?%d*)%s*([gsc])", function(v, u)
+    any = true
+    total = total + tonumber(v) * (u == "g" and 10000 or u == "s" and 100 or 1)
+    return ""
+  end)
+  if not any or rest:match("%S") then return nil end
+  total = math.floor(total + 0.5)
+  return total > 0 and total or nil
+end
+
+function UI.ParseAmount(text, currency) return UI.ParseMoney(text, currency) end
 
 ---------------------------------------------------------------------------
 -- Data helpers

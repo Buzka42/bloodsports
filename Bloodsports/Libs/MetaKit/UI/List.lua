@@ -15,30 +15,46 @@ UI.RailWidth = RAIL_W
 ---------------------------------------------------------------------------
 -- ScrollRail: units are whatever the owner scrolls in (rows for List, pixels for StatRows).
 --   rail:Update(total, visible, offset)   rail.onScroll(offset) fires on user drags/clicks.
+--   Optional look (defaults keep the v2 6 px rail): o.width, o.minThumb (18), o.trackColor ({1,1,1,0.20}),
+--   o.thumbColor (accent at 50%).
+
+-- Proportional thumb: track * visible / total, at least minH, never taller than the track (0 for no track).
+local function thumbSize(track, visible, total, minH)
+  track = tonumber(track) or 0
+  if track <= 0 then return 0 end
+  total = max(1, tonumber(total) or 1)
+  local frac = min(1, max(0, tonumber(visible) or 0) / total)
+  return min(track, max(minH or 18, track * frac))
+end
+UI.ScrollThumbSize = thumbSize
 
 function UI.ScrollRail(parent, o)
   o = o or {}
   local s = UI.Skin(o.skin)
+  local w = o.width or RAIL_W
+  local minThumb = o.minThumb or 18
   local rail = CreateFrame("Frame", nil, parent)
-  rail:SetWidth(RAIL_W)
+  rail:SetWidth(w)
   rail.onScroll = o.onScroll
   rail.total, rail.visible, rail.offset = 0, 0, 0
+  rail.railWidth, rail.minThumb = w, minThumb
 
   local track = CreateFrame("Button", nil, rail)
   track:SetPoint("TOP", rail, "TOP", 0, 0)
   track:SetPoint("BOTTOM", rail, "BOTTOM", 0, 0)
-  track:SetWidth(RAIL_W)
+  track:SetWidth(w)
   local tex = track:CreateTexture(nil, "BACKGROUND")
   tex:SetAllPoints(track)
-  tex:SetColorTexture(1, 1, 1, 0.20)
-  rail.track = track
+  tex:SetColorTexture(UI.Unpack(o.trackColor or { 1, 1, 1, 0.20 }))
+  rail.track, rail.trackTex = track, tex
 
   local thumb = CreateFrame("Button", nil, track)
-  thumb:SetWidth(RAIL_W)
+  thumb:SetWidth(w)
   thumb:SetHeight(24)
   local tt = thumb:CreateTexture(nil, "ARTWORK")
   tt:SetAllPoints(thumb)
-  tt:SetColorTexture(UI.Tokens.accent[1], UI.Tokens.accent[2], UI.Tokens.accent[3], 0.50)
+  local a = UI.Tokens.accent
+  tt:SetColorTexture(UI.Unpack(o.thumbColor or { a[1], a[2], a[3], 0.50 }))
   rail.thumb, rail.thumbTex = thumb, tt
 
   function rail:MaxOffset() return max(0, self.total - self.visible) end
@@ -60,7 +76,7 @@ function UI.ScrollRail(parent, o)
     end
     self:Show()
     local th = self:TrackHeight()
-    local thumbH = clamp(th * self.visible / self.total, 18, th)
+    local thumbH = thumbSize(th, self.visible, self.total, minThumb)
     local pos = (th - thumbH) * clamp(self.offset, 0, maxOff) / maxOff
     thumb:SetHeight(thumbH)
     thumb:ClearAllPoints()
@@ -107,12 +123,78 @@ function UI.ScrollRail(parent, o)
   end)
   track:SetScript("OnMouseUp", stopDrag)
   rail:SetScript("OnHide", stopDrag)
+  -- a resized track re-sizes the thumb (the owner's Refresh does too; this covers owners that do not)
+  rail:SetScript("OnSizeChanged", function(self)
+    if self.needed then self:Update(self.total, self.visible, self.offset) end
+  end)
   return rail
 end
 
 ---------------------------------------------------------------------------
--- List
+-- NativeScrollBar: the client's UIPanelScrollBarTemplate slider (probe first) behind the ScrollRail interface
+-- (Update(total, visible, offset), needed, onScroll). nil when no template takes; the caller keeps its rail.
 
+UI.NativeScrollTemplates = { "UIPanelScrollBarTemplate", "UIPanelScrollBarTemplateLightBorder" }
+local nativeSeq = 0
+
+function UI.NativeScrollBar(parent, o)
+  o = o or {}
+  local bar, tpl
+  for _, name in ipairs(UI.NativeScrollTemplates) do
+    if UI.HasTemplate == nil or UI.HasTemplate(name) ~= false then
+      nativeSeq = nativeSeq + 1
+      -- a global name: the template's arrow buttons are $parent-named
+      local ok, b = pcall(CreateFrame, "Slider", "MetaKitScrollBar" .. nativeSeq, parent, name)
+      if ok and b then bar, tpl = b, name break end
+    end
+  end
+  if not bar then return nil end
+  local sb = { bar = bar, template = tpl, width = 16, total = 0, visible = 0, offset = 0, needed = false,
+    onScroll = o.onScroll }
+  bar.scrollStep = 1 -- the arrow buttons step the slider by its scrollStep: one row
+  pcall(bar.SetValueStep, bar, 1)
+  pcall(bar.SetObeyStepOnDrag, bar, true)
+  -- the template's own scripts drive a ScrollFrame parent (SetVerticalScroll); ours drive the owner's offset
+  bar:SetScript("OnValueChanged", function(_, value)
+    if sb.updating then return end
+    local off = floor((value or 0) + 0.5)
+    if off ~= sb.offset then
+      sb.offset = off
+      if sb.onScroll then sb.onScroll(off) end
+    end
+  end)
+  bar:SetScript("OnMouseWheel", function(_, delta) if o.onWheel then o.onWheel(delta) end end)
+  function sb:Update(total, visible, offset)
+    self.total, self.visible, self.offset = total or 0, max(1, visible or 1), offset or 0
+    local maxOff = max(0, self.total - self.visible)
+    self.needed = maxOff > 0
+    bar:SetShown(self.needed)
+    self.updating = true
+    pcall(bar.SetMinMaxValues, bar, 0, maxOff)
+    pcall(bar.SetValue, bar, clamp(self.offset, 0, maxOff))
+    self.updating = false
+  end
+  function sb:SetPoint(...) return bar:SetPoint(...) end
+  function sb:Hide() bar:Hide() end
+  return sb
+end
+
+---------------------------------------------------------------------------
+-- List
+--   o.zebra: true (SiteTokens rowEven / rowOdd) or { evenColour, oddColour } alternating row tint; off by default.
+--   o.selectable: a left click selects the row (accentFill wash + 2 px accent bar); off by default. f:SetSelected(i)
+--   selects from code either way; f:GetSelected() reads it.
+--   v3 (all optional): o.separators (1 px SiteTokens.listSep under each row; defaults on when zebra is on),
+--   o.selectedStrip (true = 3 px, or a width: the selection bar in SiteTokens.gold), o.iconSize (class / icon cells,
+--   default min(row - 6, 18)), o.headerHeight (22 for the shell look), o.nativeScrollbar (UI.NativeScrollBar, the
+--   flat rail when it does not take).
+--   v4: o.thumbScrollbar = true: a proportional thumb (10 px track at white 8%, full body height, SiteTokens.goldDim
+--   thumb at least 24 px, height = track * visible / total); it is also what a nativeScrollbar list falls back to
+--   when no template takes. A working native slider still wins. f:VisibleCount() = data rows the last Refresh laid
+--   out inside the body, counted from the row pool. o.onRefresh(list) runs after every Refresh (scroll, resize, data).
+--   v10: rows snap to FULL rows: a pool row that would not fit entirely inside the body is hidden (never drawn
+--   half-clipped), so VisibleCount() <= VisibleRows() and a footer built on it matches what is on screen. The scroll
+--   range stays total - VisibleRows(); the last page may show fewer rows.
 local function cellValue(list, col, data)
   if col.format then
     local ok, v = pcall(col.format, data)
@@ -136,11 +218,25 @@ function UI.List(parent, o)
   local hasTitles = false
   for _, c in ipairs(columns) do if c.title then hasTitles = true end end
   local headerH = hasTitles and (o.headerHeight or UI.Metrics.header) or 0
+  local zebra = nil
+  if type(o.zebra) == "table" and type(o.zebra[1]) == "table" and type(o.zebra[2]) == "table" then
+    zebra = { o.zebra[1], o.zebra[2] }
+  elseif o.zebra then
+    local k = UI.SiteTokens or {}
+    zebra = { k.rowEven or { 1, 1, 1, 0.04 }, k.rowOdd or { 0, 0, 0, 0.12 } }
+  end
+
+  local separators = o.separators
+  if separators == nil then separators = zebra ~= nil end
+  local strip = o.selectedStrip == true and 3 or (type(o.selectedStrip) == "number" and o.selectedStrip) or nil
+  local iconSize = o.iconSize or min(rowH - 6, 18)
 
   local f = CreateFrame("Frame", nil, parent)
   f.skin = s
   f:SetSize(o.width or 400, o.height or 240)
   f.data, f.offset, f.rows, f.selected, f.lastError = {}, 0, {}, false, false
+  f.separators, f.selectedStrip, f.iconSize = separators and true or false, strip or false, iconSize
+  f.columns = columns -- v6: read-only view of the (copied) column specs, for callers / tests
 
   -- header band
   local header = CreateFrame("Frame", nil, f)
@@ -158,17 +254,42 @@ function UI.List(parent, o)
     f.headerTitles[i] = fs
   end
 
+  -- scroll: the native slider when asked for and present (arrows take 16 px above and below it), else the rail
+  local native = o.nativeScrollbar and UI.NativeScrollBar(f, { onScroll = function(off) f:SetOffset(off) end,
+    onWheel = function(delta) f:SetOffset(f.offset - delta * (o.wheelStep or 3)) end }) or nil
+  local thumbStyle = not native and (o.thumbScrollbar or o.nativeScrollbar) and true or false
+  local k = UI.SiteTokens or {}
+  local m = UI.ShellMetrics or {}
+  local railW = thumbStyle and (m.thumbTrack or 10) or RAIL_W
+  local railInset = thumbStyle and 2 or RAIL_INSET
+  local scrollW = native and (native.width + 8) or (railW + railInset + 2)
+
   -- body (clipped) + rail
   local body = CreateFrame("Frame", nil, f)
   body:SetPoint("TOPLEFT", f, "TOPLEFT", 0, -headerH)
-  body:SetPoint("BOTTOMRIGHT", f, "BOTTOMRIGHT", -(RAIL_W + RAIL_INSET + 2), 0)
+  body:SetPoint("BOTTOMRIGHT", f, "BOTTOMRIGHT", -scrollW, 0)
   body:SetClipsChildren(true)
   f.body = body
 
-  local rail = UI.ScrollRail(f, { skin = s, onScroll = function(off) f:SetOffset(off) end })
-  rail:SetPoint("TOPRIGHT", f, "TOPRIGHT", -RAIL_INSET, -(headerH + 2))
-  rail:SetPoint("BOTTOMRIGHT", f, "BOTTOMRIGHT", -RAIL_INSET, 2)
-  f.rail = rail
+  local railOpts = { skin = s, onScroll = function(off) f:SetOffset(off) end }
+  if thumbStyle then
+    local gd = k.goldDim or UI.Tokens.accent
+    railOpts.width, railOpts.minThumb = railW, m.thumbMin or 24
+    railOpts.trackColor, railOpts.thumbColor = { 1, 1, 1, 0.08 }, { gd[1], gd[2], gd[3], 1 }
+  end
+  local rail = UI.ScrollRail(f, railOpts)
+  -- the thumb track runs the full body height (header bottom to list bottom); the v2 rail keeps its 2 px insets
+  local ry = thumbStyle and 0 or 2
+  rail:SetPoint("TOPRIGHT", f, "TOPRIGHT", -railInset, -(headerH + ry))
+  rail:SetPoint("BOTTOMRIGHT", f, "BOTTOMRIGHT", -railInset, ry)
+  f.rail, f.thumbScroll = rail, thumbStyle
+  if native then
+    rail:Hide()
+    native:SetPoint("TOPRIGHT", f, "TOPRIGHT", -4, -(headerH + 16))
+    native:SetPoint("BOTTOMRIGHT", f, "BOTTOMRIGHT", -4, 16)
+    f.scrollbar = native
+  end
+  f.nativeScroll = native and true or false
 
   -- empty state: one centred line (12, muted) plus a hint line (10, muted) below it
   local empty = UI.Label(body, { skin = s, font = "body", color = "muted", justify = "CENTER", text = o.empty or "" })
@@ -182,11 +303,12 @@ function UI.List(parent, o)
     if not h or h < rowH then h = rowH * 10 end
     return h
   end
-  local function fullRows() return max(1, floor(bodyHeight() / rowH)) end
+  -- whole rows that fit the body (1e-6 absorbs float heights like 311.9999); the epsilon never admits a clipped row
+  local function fullRows() return max(1, floor(bodyHeight() / rowH + 1e-6)) end
 
   ---- columns -----------------------------------------------------------
   local function layoutColumns()
-    local avail = (f:GetWidth() or 0) - RAIL_W - RAIL_INSET - 2 - 2 * PAD
+    local avail = (f:GetWidth() or 0) - scrollW - 2 * PAD
     if avail <= 0 then avail = 400 end
     local fixed, flex = 0, 0
     for _, c in ipairs(columns) do
@@ -210,7 +332,7 @@ function UI.List(parent, o)
       local cell = row.cells[i]
       if cell and c.x then
         if c.kind == "class" or c.kind == "icon" then
-          local size = min(rowH - 6, 18)
+          local size = iconSize
           local dx = c.x + 2
           if c.align == "CENTER" then dx = c.x + (c.w - size) / 2 elseif c.align == "RIGHT" then dx = c.x + c.w - size - 2 end
           cell:ClearAllPoints()
@@ -236,25 +358,36 @@ function UI.List(parent, o)
     row:SetPoint("TOPLEFT", body, "TOPLEFT", 0, -(k - 1) * rowH)
     row:SetPoint("TOPRIGHT", body, "TOPRIGHT", 0, -(k - 1) * rowH)
     row:RegisterForClicks("LeftButtonUp", "RightButtonUp")
+    row.zebra = row:CreateTexture(nil, "BACKGROUND", nil, -2)
+    row.zebra:SetAllPoints(row)
+    row.zebra:Hide()
     row.selTex = row:CreateTexture(nil, "BACKGROUND")
     row.selTex:SetAllPoints(row)
     row.selTex:SetColorTexture(UI.Unpack(UI.Tokens.accentFill))
     row.selTex:Hide()
+    row.selBar = row:CreateTexture(nil, "ARTWORK")
+    row.selBar:SetPoint("TOPLEFT", row, "TOPLEFT", 0, 0)
+    row.selBar:SetPoint("BOTTOMLEFT", row, "BOTTOMLEFT", 0, 0)
+    row.selBar:SetWidth(strip or 2)
+    row.selBar:SetColorTexture(UI.Unpack(strip and UI.SiteTokens and UI.SiteTokens.gold or UI.Tokens.accent))
+    row.selBar:Hide()
     row.hl = row:CreateTexture(nil, "HIGHLIGHT")
     row.hl:SetAllPoints(row)
     row.hl:SetColorTexture(1, 1, 1, 0.06)
     local line = UI.Divider(row, s)
     line:SetPoint("BOTTOMLEFT", row, "BOTTOMLEFT", 0, 0)
     line:SetPoint("BOTTOMRIGHT", row, "BOTTOMRIGHT", 0, 0)
+    if separators then line:SetColorTexture(UI.Unpack((UI.SiteTokens or {}).listSep or { 0x4a / 255, 0x35 / 255, 0x1d / 255, 0.55 })) end
+    row.line = line
     row.cells = {}
     row.data = false
     for i, c in ipairs(columns) do
       local kind = c.kind or "text"
       local cell
       if kind == "class" then
-        cell = UI.ClassIcon(row, 18, s)
+        cell = UI.ClassIcon(row, iconSize, s)
       elseif kind == "icon" then
-        cell = UI.Icon(row, { size = 18, skin = s })
+        cell = UI.Icon(row, { size = iconSize, skin = s })
       elseif kind == "button" then
         cell = UI.Button(row, { skin = s, text = c.buttonText or "", width = 60, height = rowH - 6,
           onClick = function() if c.onClick and row.data then c.onClick(row.data, row.index) end end })
@@ -266,6 +399,7 @@ function UI.List(parent, o)
     end
     f:PlaceCells(row)
     row:SetScript("OnClick", function(self, button)
+      if self.data and o.selectable and button ~= "RightButton" then f:SetSelected(self.index) end
       if self.data and o.onRowClick then o.onRowClick(self.data, self, button) end
     end)
     row:SetScript("OnEnter", function(self)
@@ -284,7 +418,14 @@ function UI.List(parent, o)
       return
     end
     row:Show()
-    row.selTex:SetShown(f.selected == idx)
+    local sel = f.selected == idx
+    row.selTex:SetShown(sel)
+    row.selBar:SetShown(sel)
+    if zebra then
+      local c = idx % 2 == 0 and zebra[1] or zebra[2]
+      row.zebra:SetColorTexture(UI.Unpack(c))
+      row.zebra:SetShown(not sel)
+    end
     for i, c in ipairs(columns) do
       local cell, kind = row.cells[i], c.kind or "text"
       local v = cellValue(f, c, data)
@@ -311,15 +452,29 @@ function UI.List(parent, o)
   function f:VisibleRows() return fullRows() end
   function f:MaxOffset() return max(0, #self.data - fullRows()) end
 
+  -- Data rows the last Refresh laid out on screen: pool rows bound to data that lie wholly inside the body.
+  function f:VisibleCount() return self.visibleCount or 0 end
+
   function f:Refresh()
-    local need = ceil(bodyHeight() / rowH) + 1
+    local bh = bodyHeight()
+    local need = ceil(bh / rowH) + 1
     while #self.rows < need do self.rows[#self.rows + 1] = newRow(#self.rows + 1) end
     self.offset = clamp(self.offset, 0, self:MaxOffset())
-    for k, row in ipairs(self.rows) do bind(row, self.offset + k, self.data[self.offset + k]) end
+    local full, shown = fullRows(), 0
+    for k, row in ipairs(self.rows) do
+      -- v10: a pool slot past the last full row stays empty (hidden), so no row is ever drawn half-clipped
+      bind(row, self.offset + k, k <= full and self.data[self.offset + k] or nil)
+      if row.data and row:IsShown() then shown = shown + 1 end
+    end
+    self.visibleCount = shown
     local isEmpty = #self.data == 0
     empty:SetShown(isEmpty and (o.empty or "") ~= "")
     emptyHint:SetShown(isEmpty and (o.emptyHint or "") ~= "")
-    rail:Update(#self.data, fullRows(), self.offset)
+    if native then native:Update(#self.data, fullRows(), self.offset) else rail:Update(#self.data, fullRows(), self.offset) end
+    if o.onRefresh then
+      local ok, err = pcall(o.onRefresh, self)
+      if not ok then self.lastError = err end
+    end
   end
 
   function f:SetData(rows)
@@ -343,6 +498,8 @@ function UI.List(parent, o)
     self.selected = index
     self:Refresh()
   end
+  function f:GetSelected() return self.selected end
+  f.zebraColors = zebra
 
   function f:SetEmptyText(t, hint)
     o.empty = t
