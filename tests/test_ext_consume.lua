@@ -53,6 +53,7 @@ T.ok(Ext.Register("narrator", "ext_test_narr", { owner = "Test", lines = functio
   if category == "kill" or category == "flee" then return { "EXT " .. category .. ": " .. tostring(ctx.winner) } end
   if category == "ring_verdict" then return { "EXT verdict: " .. tostring(ctx.outcome) } end
   if category == "series_done" then return { "EXT series: " .. tostring(ctx.winner) } end
+  if category == "ring_dispute" then return { "EXT dispute " .. tostring(ctx.stage) .. ": " .. tostring(ctx.title) } end
   return nil
 end }))
 T.ok(Ext.Register("narrator", "ext_test_bad", function() error("narrator boom") end))
@@ -267,6 +268,28 @@ T.test("narrator: ring verdict line comes after ours, on the ring's scope", func
   local i = find(l, "^Verdict on Winner: Fa!$")
   T.ok(i, table.concat(l, " / "))
   T.eq(l[i + 1], "EXT verdict: Fa")
+  R.Close(true)
+  T.noErrors()
+end)
+
+T.test("narrator: ring dispute lines get a ring_dispute provider line for each stage", function()
+  reset("headline")
+  local s = openRing()
+  party("Alice", "Bob")
+  T.Deliver("BSPT", table.concat({ "RB", s.id, "Fa", "100" }, "\t"), "WHISPER", "Alice-Normal")
+  T.Deliver("BSPT", table.concat({ "RB", s.id, "Fb", "50" }, "\t"), "WHISPER", "Bob-Normal")
+  T.Advance(3)
+  T.ok(R.Lock()); T.Advance(3)
+  T.ok(R.Verdict("Fa")); T.Advance(3)
+  T.Deliver("BSPT", table.concat({ "R2D", s.id, "m1", "wrong", "" }, "\t"), "WHISPER", "Bob-Normal"); T.Advance(3)
+  T.ok(R.ResolveDispute("m1", "uphold")); T.Advance(3)
+  local l = lines()
+  local i = find(l, "^The verdict for Winner is disputed")
+  T.ok(i, table.concat(l, " / "))
+  T.eq(l[i + 1], "EXT dispute disputed: Winner")
+  local j = find(l, "^The referee upholds the verdict%.$")
+  T.ok(j, table.concat(l, " / "))
+  T.eq(l[j + 1], "EXT dispute upheld: Winner")
   R.Close(true)
   T.noErrors()
 end)

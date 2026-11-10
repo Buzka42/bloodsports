@@ -633,23 +633,22 @@ function UI.ChromeDemo(msg)
     chromeDbs[key] = chromeDbs[key] or {}
     chrome = UI.Shell({ name = name, title = "World of Meta", db = chromeDbs[key], width = 960, height = 640,
       sidebarWidth = UI.ShellMetrics.compactSidebar,
-      portrait = "Interface\\Icons\\INV_Misc_Book_09", footerText = "Sync now", footerVariant = "dark",
+      portrait = "Interface\\Icons\\INV_Misc_Book_09", footerText = "Sync now", footerKind = "gold",
       chrome = kind, sidebar = "parchment", nativeButtons = buttons,
-      -- v8 art: wordmark title, M medallion portrait, mirrored corner ornaments (each off when the art is missing)
-      -- v9: 640 high (it8 Ring footer: 14 shown), bottom corners only, the gold-X plate close (native if it fails)
-      ns = type(demoNs) == "table" and demoNs or nil, titleArt = true, portraitArt = true, corners = "bottom",
-      closeStyle = "plate",
-      -- v10: crests flank the wordmark (Bloodsports Media has no crest_elders: the right side falls to
-      -- crest_tournament; either side hides when the loading addon's Media lacks it)
-      flankArt = { left = "crest_bloodsports", right = { "crest_elders", "crest_tournament" } },
+      -- v8 art: wordmark title, M medallion portrait (each off when the art is missing)
+      -- v14: same option set as the shared shell: gold Sync plate, native close, no corner ornaments
+      ns = type(demoNs) == "table" and demoNs or nil, titleArt = true, portraitArt = true,
+      -- v13: no crest flanks (owner); per-tab wordmarks below, as in the shared shell
       summary = function(_, tabId) return SUMMARY[tabId] end,
       footerTooltip = { "Sync now", { "Reloads the UI so the uploader can pick up your data." } },
       onFooter = function() print("MetaKit demo: sync requested (the real addons reload the UI here).") end })
     chromes[key] = chrome
     chrome.demoData, chrome.demoLists, chrome.demoStatPages, chrome.demoPages = data, {}, {}, {}
     -- no owners: the demo shows both tabs whichever addons are loaded
-    chrome:AddTab({ id = "bloodsports", label = "Bloodsports", order = 1, extra = recentExtra("bloodsports") })
-    chrome:AddTab({ id = "elders", label = "Elders", order = 2, extra = recentExtra("elders") })
+    chrome:AddTab({ id = "bloodsports", label = "Bloodsports", order = 1, extra = recentExtra("bloodsports"),
+      titleArt = UI.SharedTitleArt and UI.SharedTitleArt.bloodsports or "logo_bloodsports" })
+    chrome:AddTab({ id = "elders", label = "Elders", order = 2, extra = recentExtra("elders"),
+      titleArt = UI.SharedTitleArt and UI.SharedTitleArt.elders or "logo_elders" })
 
     local function listSection(tab, id, order, label, ic, subtitle, columns, rows, selected, foot)
       chrome:AddSection({ tab = tab, id = id, label = label, order = order, icon = icon(ic), build = function(parent)

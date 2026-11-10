@@ -9,6 +9,13 @@ local A = ns.A
 local UI = {}
 ns.UI = UI
 UI.SKIN = "bloodsports"
+-- v15 (JUDGE3 D2): one placeholder glyph suite-wide, the em dash (the shared shell's UI.ShellDash is the same bytes)
+UI.DASH = "\226\128\148"
+-- v15 (JUDGE3 S4 / S5 / F-11 / F-12): the pane layout every Bloodsports section shares. CONTENT_X = the List's PAD (4) +
+-- half its 16 px gutter + the 1 px inset edge: where a list's first text cell starts when its first column is text,
+-- and where section headers, helper copy and the footer line start. FOOT_H = the footer band at the pane bottom.
+-- ICON_W = the one icon / class cell width (22 px) every list uses.
+UI.CONTENT_X, UI.FOOT_H, UI.ICON_W, UI.LIST_GUTTER = 13, 22, 22, 16
 UI.tabDefs = {}   -- id -> build(parent) -> frame, refreshFn
 
 local M = A:NewModule("UITheme")
@@ -87,7 +94,7 @@ end
 
 -- Age of a timestamp that may be GetTime() or server time.
 function UI.Ago(t)
-  if type(t) ~= "number" then return "-" end
+  if type(t) ~= "number" then return UI.DASH end
   local now = t > 1e9 and MK.Util.ServerTime() or GetTime()
   local d = math.max(0, now - t)
   if d < 60 then return math.floor(d) .. "s" end
@@ -96,7 +103,7 @@ function UI.Ago(t)
 end
 
 function UI.Pct(w, n)
-  if not n or n <= 0 then return "-" end
+  if not n or n <= 0 then return UI.DASH end
   return math.floor(w / n * 100 + 0.5) .. "%"
 end
 
@@ -192,7 +199,7 @@ end
 
 function UI.AvgDur(t)
   if t.durN > 0 then return MK.Util.Duration(t.dur / t.durN) end
-  return "-"
+  return UI.DASH
 end
 
 -- My wins/losses against one opponent name.
@@ -231,6 +238,50 @@ end
 -- Tabs and popups
 
 function UI.RegisterTab(id, build) UI.tabDefs[id] = build end
+
+-- v15 (JUDGE3 S5 / F-12): the footer status line every section draws at its pane bottom (the Ring idle footer's
+-- idiom): small, muted, single line, CONTENT_X in from both edges, 6 px above the pane bottom.
+-- v16 (judge4): the muted token read dull on the dark pane; every pane footer (Duels / Matches / Finder / Clubs and
+-- the Ring idle footer) shares this one brighter parchment ink.
+-- v17 (judge5): still dim on the dark pane: (0.78, 0.70, 0.56) -> (0.88, 0.80, 0.64), and the 10 pt small font is
+-- raised to FOOT_SIZE (keeping the font object's face and flags); a font already at or over FOOT_SIZE is left alone.
+UI.FOOT_INK, UI.FOOT_SIZE = { 0.88, 0.80, 0.64, 1 }, 11
+function UI.ApplyFootInk(l)
+  l:SetTextColor(UI.FOOT_INK[1], UI.FOOT_INK[2], UI.FOOT_INK[3], UI.FOOT_INK[4])
+  l.mkColor = UI.FOOT_INK
+  if l.GetFont and l.SetFont then
+    local ok, path, size, flags = pcall(l.GetFont, l)
+    if ok and type(path) == "string" and (tonumber(size) or 0) < UI.FOOT_SIZE
+      and pcall(l.SetFont, l, path, UI.FOOT_SIZE, flags or "") then
+      l.mkFootSize = UI.FOOT_SIZE
+    end
+  end
+  return l
+end
+
+function UI.PaneFooter(pane)
+  local k = UI.Kit()
+  local l = k.Label(pane, { text = "", font = "small", color = "muted", skin = UI.SKIN })
+  UI.ApplyFootInk(l)
+  if l.SetWordWrap then l:SetWordWrap(false) end
+  l:SetPoint("BOTTOMLEFT", pane, "BOTTOMLEFT", UI.CONTENT_X, 6)
+  l:SetPoint("BOTTOMRIGHT", pane, "BOTTOMRIGHT", -UI.CONTENT_X, 6)
+  pane.footer = l
+  return l
+end
+
+-- 1 px gold-dim (138,106,46) rule under a section header (the Ring idle view's sectionRule).
+UI.RULE = { 138 / 255, 106 / 255, 46 / 255, 1 }
+function UI.SectionRule(parent)
+  local t = parent:CreateTexture(nil, "ARTWORK")
+  t:SetColorTexture(UI.RULE[1], UI.RULE[2], UI.RULE[3], UI.RULE[4])
+  t:SetHeight(1)
+  t.mkColor = UI.RULE
+  return t
+end
+
+-- "1 duel" / "3 duels"
+function UI.Plural(n, one, many) n = tonumber(n) or 0; return n .. " " .. (n == 1 and one or (many or (one .. "s"))) end
 
 local pending = {}
 

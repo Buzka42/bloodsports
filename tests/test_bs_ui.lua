@@ -133,19 +133,18 @@ T.test("finder tab: rows, buttons, list-me, popups", function()
   ns.Finder.entries.duel = { { name = "Bob-Normal", kind = "duel", venue = "crossroads", class = "ROGUE", level = 20, streak = 3, seen = GetTime() - 30, note = "gg" } }
   ns.Finder.entries.ref = { { name = "Goblin-Normal", kind = "ref", venue = "ratchet", class = "MAGE", level = 40, rating = 4.5, seen = GetTime() - 5 } }
   A:Fire("TOGGLE_MAIN", "finder")
-  local people, refs
+  local people
+  local function colByText(l, text) for _, c in ipairs(l._opts.columns) do if c.buttonText == text then return c end end end
   for _, l in ipairs(made.lists) do
-    for _, c in ipairs(l._opts.columns) do if c.buttonText == "Invite" and c.key == "i" and #l._opts.columns == 9 then people = l end end
-    for _, c in ipairs(l._opts.columns) do if c.buttonText == "Ask invite" and #l._opts.columns == 8 and l._opts.columns[7].buttonText == "Whisper" and l._opts.columns[1].key == "class" and l._opts.columns[2].title == "Name" then refs = l end end
+    if l._opts.columns[2] and l._opts.columns[2].title == "Name" and colByText(l, "Invite") then people = l end
   end
   T.ok(people and #people.data == 1, "people row")
   local row = people.data[1]
-  local cols = people._opts.columns
-  cols[8].onClick(row)   -- Invite
+  colByText(people, "Invite").onClick(row)
   T.eq(ns.Finder.calls[#ns.Finder.calls][1], "invite")
-  cols[9].onClick(row)
+  colByText(people, "Ask invite").onClick(row)
   T.eq(ns.Finder.calls[#ns.Finder.calls][1], "ask")
-  cols[7].onClick(row)   -- whisper (stub: no-op)
+  colByText(people, "Whisper").onClick(row)   -- whisper (stub: no-op)
   for _, c in ipairs(made.checks) do if c._opts.label == "List me" then c:Click(); c:Click() end end
   T.eq(ns.Finder.calls[#ns.Finder.calls][1], "stop")
   -- popups

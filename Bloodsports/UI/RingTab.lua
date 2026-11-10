@@ -34,7 +34,7 @@ local ADD_WHY = {
   session = "The ring is not open.", markets = "Eight markets is the limit.", series = "Needs a bo3 / bo5 series.",
   fighters = "Pick two different fighters.", outcomes = "2 to 8 outcomes.", lockAt = "Lock time: 1 to 30 minutes.",
   price = "Every price 1.01 to 10.00.", bank = "Bank is over your level's max.", money = "Not enough gold for that bank.",
-  closed = "Market is not a draft.",
+  closed = "Market is not a draft.", pending = "Another series is already waiting: use its fighters and best-of.",
 }
 
 ---------------------------------------------------------------------------
@@ -68,6 +68,15 @@ function UI.Pools(s)
   local t = rawget(s, "totals")
   if n == 0 and type(t) == "table" then a, b = t[1] or t.a or 0, t[2] or t.b or 0 end
   return a, b, a + b
+end
+
+-- Width a kit checkbox needs: its 18 px box, the 8 px gap and its label as measured (+2 px for AA overhang). The kit
+-- checkbox otherwise keeps whatever width the caller guessed while its label runs on past the frame's right edge.
+function UI.CheckWidth(c)
+  local fs = c and c.text
+  local ok, w = false, 0
+  if fs and fs.GetStringWidth then ok, w = pcall(fs.GetStringWidth, fs) end
+  return 18 + 8 + math.ceil(ok and tonumber(w) or 0) + 2
 end
 
 local function roster()
@@ -334,6 +343,69 @@ function RV.OwedToMe()
   return n, sum
 end
 
+-- "45s" / "12m" / "3h" / "2d" since a server timestamp.
+function RV.Age(t, at)
+  local d = max(0, floor((at or now()) - (tonumber(t) or 0)))
+  if d < 60 then return d .. "s" end
+  if d < 3600 then return floor(d / 60) .. "m" end
+  if d < 86400 then return floor(d / 3600) .. "h" end
+  return floor(d / 86400) .. "d"
+end
+
+-- Which bet an unmatched trade row should be booked to (host, Ledger.Assign): the trade partner's bet that is still
+-- waiting for this money. A stake (we got gold) needs an unpaid bet in an open or locked market; a payout (we gave
+-- gold) needs a bet with a payout still owed in a settled or void market. When the partner has several such bets,
+-- `prefMid` (the selected market) breaks the tie. Returns { sid, mid, bettor } or nil + "none" | "many".
+function RV.UnmatchedCandidate(row, s, prefMid)
+  if type(row) ~= "table" or type(s) ~= "table" or not s.v2 or not s.isHost then return nil, "none" end
+  local got, gave = tonumber(row.got) or 0, tonumber(row.gave) or 0
+  if (got > 0) == (gave > 0) or row.excess or row.reason == "both" or (type(row.matched) == "table" and #row.matched > 0) then
+    return nil, "none" -- a two-way trade, or one already partly booked, is not a one-click assignment
+  end
+  local cands = {}
+  for _, m in ipairs(RV.Markets(s)) do
+    for _, b in ipairs(m.bets or {}) do
+      if UI.SameName(b.bettor, row.partner) then
+        local ok
+        if got > 0 then
+          ok = not b.paid and not b.void and (m.status == "open" or m.status == "locked")
+        else
+          ok = FINAL[m.status] and (tonumber(b.payout) or 0) - (tonumber(b.paidOutAmount) or 0) > 0
+        end
+        if ok then cands[#cands + 1] = { sid = s.id, mid = m.mid, bettor = b.bettor } end
+      end
+    end
+  end
+  if #cands > 1 and prefMid then
+    local pick = {}
+    for _, c in ipairs(cands) do if c.mid == prefMid then pick[#pick + 1] = c end end
+    if #pick == 1 then cands = pick end
+  end
+  if #cands == 1 then return cands[1] end
+  return nil, #cands == 0 and "none" or "many"
+end
+
+RV.UNMATCHED_ROWS = 5
+
+-- Host's Ledger.Unmatched() as view rows: { count, sum (copper), text (header), rows = { { tr, amount, from, age, dir,
+-- cand, why } } }, newest first, at most UNMATCHED_ROWS rows.
+function RV.Unmatched(s, prefMid, at)
+  local list = ns.Ledger and ns.Ledger.Unmatched and UI.Try(ns.Ledger.Unmatched)
+  list = type(list) == "table" and list or {}
+  local out = { count = #list, sum = 0, rows = {} }
+  for _, tr in ipairs(list) do out.sum = out.sum + (tonumber(tr.got) or 0) + (tonumber(tr.gave) or 0) end
+  for i = #list, max(1, #list - RV.UNMATCHED_ROWS + 1), -1 do
+    local tr = list[i]
+    local got = tonumber(tr.got) or 0
+    local cand, why = RV.UnmatchedCandidate(tr, s, prefMid)
+    out.rows[#out.rows + 1] = { tr = tr, amount = UI.Amount(got > 0 and got or (tonumber(tr.gave) or 0), "gold"),
+      from = UI.Short(tr.partner), age = RV.Age(tr.t, at), dir = got > 0 and "in" or "out", cand = cand, why = why }
+  end
+  out.text = out.count == 0 and "" or string.format("Unmatched: %s from %d %s", UI.Amount(out.sum, "gold"), out.count,
+    out.count == 1 and "trade" or "trades")
+  return out
+end
+
 -- Local §3.4 subset run before Place: closed, pick, dup, amount (min/cap), band, money. Returns code, max.
 function RV.SlipCheck(s, m, idx, amount)
   if not s or not m then return "market", 0 end
@@ -364,6 +436,28 @@ function RV.RefusalText(code, maxv, currency)
   return t
 end
 
+-- v14 idle footer status line: "2 referees · 1 ring nearby · venue Ratchet" (no venue: "no venue here").
+-- v16 (judge4 ring void): the "How the ring works" plate under Rings nearby shows only while BOTH idle lists are
+-- empty and no session is live.
+RV.HOW_TITLE = "HOW THE RING WORKS"
+RV.HOW_LINES = {
+  "1. A referee opens a ring at a venue (Ratchet, Everlook, Gadgetzan, Booty Bay).",
+  "2. Accept their party invite to join the ring layer.",
+  "3. Bet on markets, or fight when your bout is called.",
+}
+RV.HOW_INK = { 0.72, 0.64, 0.48, 1 }            -- grey-gold body lines on the dark inset
+RV.HOW_TITLE_INK = { 138 / 255, 106 / 255, 46 / 255, 1 } -- gold-dim header (the section rule's colour)
+function RV.HowVisible(nRef, nRing, sessionLive)
+  return not sessionLive and (tonumber(nRef) or 0) == 0 and (tonumber(nRing) or 0) == 0
+end
+
+function RV.IdleFooter(nRef, nRing, venueName)
+  nRef, nRing = tonumber(nRef) or 0, tonumber(nRing) or 0
+  local v = (type(venueName) == "string" and venueName ~= "" and venueName ~= "-") and ("venue " .. venueName) or "no venue here"
+  return string.format("%d %s · %d %s nearby · %s", nRef, nRef == 1 and "referee" or "referees", nRing,
+    nRing == 1 and "ring" or "rings", v)
+end
+
 local function split(text)
   local out = {}
   for part in tostring(text or ""):gmatch("[^,;]+") do
@@ -374,8 +468,17 @@ local function split(text)
 end
 RV.Split = split
 
--- Create-market form -> Ring.AddMarket spec, or nil + message. form = { kind, mode, a, b, labels, title, prices,
--- bank, lockOn, lockMin, open }.
+-- Best-of of the series a new series market would join: the live series (3, 5 or 1), else the form's pick for an
+-- upcoming one; nil when there is none.
+function RV.SeriesBo(s, form)
+  local sr = s and s.series
+  if type(sr) == "table" and not sr.done and tonumber(sr.bo) then return tonumber(sr.bo), true end
+  local bo = form and tonumber(form.bo)
+  if bo == 3 or bo == 5 then return bo, false end
+end
+
+-- Create-market form -> Ring.AddMarket spec, or nil + message. form = { kind, mode, scope ("fight" | "series"), bo
+-- (3 | 5, an upcoming series), a, b, labels, title, prices, bank, lockOn, lockMin, open }.
 function RV.ParseSpec(form, s)
   form = form or {}
   s = s or {}
@@ -385,16 +488,31 @@ function RV.ParseSpec(form, s)
   local spec = { kind = kind, mode = mode, open = form.open and true or false, title = title ~= "" and title or nil }
   local maxOut = RV.C("MAX_OUTCOMES")
   local nOut
-  if kind == "winner" or kind == "method" then
+  local bo, live = RV.SeriesBo(s, form)
+  local seriesWinner = kind == "winner" and form.scope == "series" and bo and bo > 1
+  -- an upcoming series (none live yet) is named by its two fighters; the engine binds it at SERIES_START
+  local function pending()
+    local fa, fb = UI.Fighters(s)
+    local a, b = form.a or fa, form.b or fb
+    if not a or not b or UI.SameName(a, b) then return false end
+    spec.a, spec.b, spec.bo = a, b, bo
+    return true
+  end
+  if seriesWinner then
+    if bo ~= 3 and bo ~= 5 then return nil, "Series markets need a bo3 or bo5 series." end
+    spec.scope = "series"
+    if not live and not pending() then return nil, "Pick two different fighters." end
+    nOut = 2
+  elseif kind == "winner" or kind == "method" then
     local fa, fb = UI.Fighters(s)
     local a, b = form.a or fa, form.b or fb
     if not a or not b or UI.SameName(a, b) then return nil, "Pick two different fighters." end
     spec.a, spec.b = a, b
     nOut = kind == "winner" and 2 or 4
   elseif kind == "score" then
-    local bo = s.series and tonumber(s.series.bo)
     if bo ~= 3 and bo ~= 5 then return nil, "Score markets need a bo3 or bo5 series." end
     spec.scope = "series"
+    if not live and not pending() then return nil, "Pick two different fighters." end
     nOut = bo == 3 and 4 or 6
   else
     local labels = split(form.labels)
@@ -470,7 +588,8 @@ end
 local function build(pane)
   local k = UI.Kit()
   local st = { mid = nil, outIdx = nil, amount = "", create = false, dispute = "wrong",
-    form = { kind = "winner", mode = "pari", lockOn = "fight", labels = "", title = "", prices = "", bank = "", lockMin = "" } }
+    form = { kind = "winner", mode = "pari", lockOn = "fight", scope = "fight", bo = 1, labels = "", title = "", prices = "",
+      bank = "", lockMin = "" } }
   local box = {}
   pane.ring = box
   UI.RingPane = box   -- test / debug handle on the built widgets
@@ -489,10 +608,11 @@ local function build(pane)
   end
   local function primary(parent, text, w, fn)
     if k.Plate then
-      local ok, p = pcall(k.Plate, parent, { kind = "gold", text = text, width = w, height = 24, onClick = fn })
+      -- v15 (JUDGE3 S2 / F-8): primary actions are the 22 px gold plate
+      local ok, p = pcall(k.Plate, parent, { kind = "gold", text = text, width = w, height = 22, onClick = fn })
       if ok and p then return p end
     end
-    return k.Button(parent, { text = text, width = w, height = 24, variant = "accent", skin = UI.SKIN, onClick = fn })
+    return k.Button(parent, { text = text, width = w, height = 22, variant = "primary", skin = UI.SKIN, onClick = fn })
   end
   local function enable(b, on) if b.SetEnabledState then b:SetEnabledState(on) end end
   -- Places the shown frames of a row left to right from x0 (hidden ones take no space).
@@ -511,60 +631,193 @@ local function build(pane)
   local refresh   -- forward
 
   ---- idle view ----------------------------------------------------------
+  -- v14 (JUDGE1 R-4..R-9): one content left edge (CONTENT_X: section headers, helper, empty text, footer and the
+  -- lists' first cell all start there; the lists themselves span the pane edge to edge), both tables in the kit's
+  -- dark inset with gold-dim header plates (List chrome = "inset", 16 px gutters, flex Referee / Host / Ring columns
+  -- so the table fills the pane width), a 1 px gold-dim rule under each section header, empty lists collapsed to two
+  -- rows with left-aligned copy, and a footer status line at the pane bottom. box.idleLayout records the geometry.
+  -- v15 (JUDGE3 S4 / F-11): the lead icon cell is the suite's 22 px (UI.ICON_W); the empty copy starts at the first
+  -- TEXT column (Referee / Host), not at the icon cell
+  local LIST_GUTTER, LEAD_W, LIST_ROW, LIST_HEAD = 16, UI.ICON_W or 22, 22, 22
+  local CONTENT_X = 4 + LIST_GUTTER / 2 + 1 -- the List's PAD + half a gutter + the inset edge: its first cell's x
+  local FOOT_H, SECTION_GAP = 22, 16
+  local RULE = { 138 / 255, 106 / 255, 46 / 255, 1 }
+  local function sectionRule(parent)
+    local t = parent:CreateTexture(nil, "ARTWORK")
+    t:SetColorTexture(RULE[1], RULE[2], RULE[3], RULE[4])
+    t:SetHeight(1)
+    t.mkColor = RULE
+    return t
+  end
   local idle = CreateFrame("Frame", nil, pane)
   idle:SetAllPoints(pane)
   box.idle = idle
   local ih = label(idle, "Referees on duty", "body", "accent")
-  ih:SetPoint("TOPLEFT", idle, "TOPLEFT", 8, -8)
-  local ihint = label(idle, "Ask a referee for an invite and accept the party invite. That puts ya in the ring's layer.", "small", "muted")
-  ihint:SetPoint("TOPLEFT", idle, "TOPLEFT", 8, -30)
-  local refCheck = k.Checkbox(idle, { label = "Become referee", width = 120, checked = false, onChange = function(on)
+  ih:SetPoint("TOPLEFT", idle, "TOPLEFT", CONTENT_X, -8)
+  local ihRule = sectionRule(idle)
+  ihRule:SetPoint("TOPLEFT", idle, "TOPLEFT", 0, -32)
+  ihRule:SetPoint("TOPRIGHT", idle, "TOPRIGHT", 0, -32)
+  -- JUDGE1 #21: the "ring's" apostrophe (ASCII already) rendered with visible space either side at this size: reworded
+  local ihint = label(idle, "Ask a referee for an invite and accept the party invite. That puts ya in the ring layer.", "small", "muted")
+  ihint:SetPoint("TOPLEFT", idle, "TOPLEFT", CONTENT_X, -38)
+  -- v15 (JUDGE3 R4 / F-9 / F-10): the native check, label on its LEFT, its box 8 px in from the pane's right edge and
+  -- centred on the "Referees on duty" line; Open the ring (when shown) sits HEAD_GAP left of it
+  -- v16 (judge4): the native box at 26 px (the 24 px template art read tiny in captures)
+  local refCheck = k.Checkbox(idle, { label = "Become referee", checked = false, native = true, size = 30, labelLeft = true, onChange = function(on)
     A.db.config.referee.available = on and true or false
     A:Fire("REFEREE_AVAILABILITY", A.db.config.referee.available)
     UI.Refresh()
   end })
-  refCheck:SetPoint("TOPRIGHT", idle, "TOPRIGHT", -120, -6)
-  local openBtn = k.Button(idle, { text = "Open the ring", width = 110, height = 22, variant = "accent", onClick = function()
+  -- auto width: the button sizes to its own label
+  local openBtn = k.Button(idle, { text = "Open the ring", height = 22, variant = "primary", onClick = function()
     if not (ns.Ring and ns.Ring.Open) then return noRing() end
     local v = ns.venues and UI.Try(ns.venues.Current, ns.venues)
     UI.Try(ns.Ring.Open, v and v.kind == "ring" and v.id or nil)
   end })
-  openBtn:SetPoint("TOPRIGHT", idle, "TOPRIGHT", -8, -6)
+  -- Header row. v15: the checkbox owns the right edge (box 8 px in, vertically centred on the heading line, so it never
+  -- floats a button-width short of the edge); its frame is its measured width (box + gap + label). Open the ring rides
+  -- HEAD_GAP left of it while shown; when heading + button + checkbox do not fit, the button drops under the checkbox.
+  -- box.idleHead records the computed geometry.
+  local HEAD_PAD, HEAD_GAP, HEAD_Y = 8, 8, 8
+  local function idleHead()
+    local cbW = refCheck.MeasuredWidth and refCheck:MeasuredWidth() or UI.CheckWidth(refCheck)
+    local btnW = math.ceil(openBtn:GetWidth() or 0)
+    refCheck:SetWidth(cbW)
+    local rowW = idle:GetWidth() or 0
+    local need = CONTENT_X + math.ceil(ih:GetStringWidth() or 0) + 16 + btnW + HEAD_GAP + cbW + HEAD_PAD
+    local stacked = rowW > 0 and rowW < need
+    local fs = ih.GetStringHeight and ih:GetStringHeight() or 12
+    local midY = -(HEAD_Y + (tonumber(fs) or 12) / 2)   -- the heading line's vertical centre
+    refCheck:ClearAllPoints(); openBtn:ClearAllPoints(); ihint:ClearAllPoints()
+    refCheck:SetPoint("RIGHT", idle, "TOPRIGHT", -HEAD_PAD, midY)
+    ihint:SetPoint("TOPLEFT", idle, "TOPLEFT", CONTENT_X, -38)
+    if stacked then
+      openBtn:SetPoint("TOPRIGHT", idle, "TOPRIGHT", -HEAD_PAD, midY - 13)
+      ihint:SetPoint("RIGHT", openBtn, "LEFT", -HEAD_GAP, 0)
+    else
+      openBtn:SetPoint("RIGHT", refCheck, "LEFT", -HEAD_GAP, 0)
+      ihint:SetPoint("RIGHT", idle, "RIGHT", -HEAD_PAD, 0)
+    end
+    box.idleHead = { checkW = cbW, buttonW = btnW, gap = HEAD_GAP, pad = HEAD_PAD, rowW = rowW, need = need,
+      stacked = stacked, midY = midY }
+  end
+  if ihint.SetWordWrap then ihint:SetWordWrap(false) end
+  idle:SetScript("OnSizeChanged", function() idleHead() end)
+  idleHead()
   local function ask(row)
     if not (ns.Finder and ns.Finder.RequestInvite) then A:Print("Finder unavailable.") return end
     UI.Try(ns.Finder.RequestInvite, row.full, "ref", row.venue)
   end
-  local refList = k.List(idle, { skin = UI.SKIN, rowHeight = 22, zebra = true, empty = "No referee about. Goblins are on lunch.",
+  local refList = k.List(idle, { skin = UI.SKIN, rowHeight = LIST_ROW, headerHeight = LIST_HEAD, zebra = true,
+    chrome = "inset", gutter = LIST_GUTTER, emptyAlign = "LEFT",
+    empty = "No referee about. Goblins are on lunch.", emptyHint = "Tick Become referee to offer your services.",
     columns = {
-      { key = "class", title = "", width = 28, kind = "class" },
-      { key = "name", title = "Referee", width = 120, kind = "text" },
-      { key = "level", title = "Lvl", width = 32, kind = "text" },
-      { key = "venueName", title = "Ring", width = 100, kind = "text" },
-      { key = "rating", title = "Rating", width = 56, kind = "text" },
-      { key = "seen", title = "Seen", width = 40, kind = "text" },
-      { key = "w", title = "", width = 62, kind = "button", buttonText = "Whisper", onClick = function(r) UI.Whisper(r.full) end },
-      { key = "a", title = "", width = 76, kind = "button", buttonText = "Ask invite", onClick = ask },
+      -- v15 (JUDGE3 R3 / F-11): Referee fixed, Ring the flex column starting at the same x as the Rings table's Ring
+      -- (LEAD_W + 130 + 40 = LEAD_W + 170), 16 px gutters, the numbers right-aligned
+      { key = "class", title = "", width = LEAD_W, kind = "class" },
+      { key = "name", title = "Referee", width = 130, kind = "text" },
+      { key = "level", title = "Lvl", width = 40, kind = "text", align = "RIGHT" },
+      { key = "venueName", title = "Ring", kind = "text" },                 -- flex
+      { key = "rating", title = "Rating", width = 64, kind = "text", align = "RIGHT" },
+      { key = "seen", title = "Seen", width = 70, kind = "text", align = "RIGHT" },
+      { key = "w", title = "", width = 70, kind = "button", buttonText = "Whisper", onClick = function(r) UI.Whisper(r.full) end },
+      { key = "a", title = "", width = 86, kind = "button", buttonText = "Ask invite", onClick = ask },
     } })
-  refList:SetPoint("TOPLEFT", idle, "TOPLEFT", 0, -52)
-  refList:SetPoint("RIGHT", idle, "RIGHT", 0, 0)
-  refList:SetHeight(20 + 6 * 22)
   local bh = label(idle, "Rings nearby", "body", "accent")
-  bh:SetPoint("TOPLEFT", idle, "TOPLEFT", 8, -214)
-  local browser = k.List(idle, { skin = UI.SKIN, rowHeight = 22, zebra = true, empty = "No rings announced nearby.",
+  local bhRule = sectionRule(idle)
+  -- the lead column mirrors the referee table's class icon, so Host's text starts exactly where Referee's does
+  local RING_ICON = "Interface\\Icons\\INV_Misc_Coin_01"
+  local browser = k.List(idle, { skin = UI.SKIN, rowHeight = LIST_ROW, headerHeight = LIST_HEAD, zebra = true,
+    chrome = "inset", gutter = LIST_GUTTER, emptyAlign = "LEFT",
+    empty = "No rings announced nearby.", emptyHint = "Rings appear here when a host opens one nearby.",
     columns = {
-      { key = "name", title = "Host", width = 110, kind = "text" },
-      { key = "venueName", title = "Ring", width = 110, kind = "text" },
-      { key = "level", title = "Bookie", width = 50, kind = "text" },
-      { key = "markets", title = "Markets", width = 56, kind = "text", align = "RIGHT" },
-      { key = "bettors", title = "Bettors", width = 56, kind = "text", align = "RIGHT" },
-      { key = "currency", title = "Stakes", width = 56, kind = "text" },
+      { key = "icon", title = "", width = LEAD_W, kind = "icon", format = function() return RING_ICON end },
+      { key = "name", title = "Host", width = 170, kind = "text" },         -- v15: Ring starts at LEAD_W + 170
+      { key = "venueName", title = "Ring", width = 130, kind = "text" },
+      { key = "level", title = "Bookie", kind = "text" },                   -- flex
+      { key = "markets", title = "Markets", width = 62, kind = "text", align = "RIGHT" },
+      { key = "bettors", title = "Bettors", width = 62, kind = "text", align = "RIGHT" },
+      { key = "currency", title = "Stakes", width = 60, kind = "text", align = "RIGHT" },
       { key = "join", title = "", width = 60, kind = "button", buttonText = "Join", onClick = function(r)
         ring("Join", r.host, r.sid)
       end },
     } })
-  browser:SetPoint("TOPLEFT", idle, "TOPLEFT", 0, -234)
-  browser:SetPoint("BOTTOMRIGHT", idle, "BOTTOMRIGHT", 0, 0)
-  box.refList, box.browser = refList, browser
+  local idleFoot = label(idle, "", "small", "muted")
+  idleFoot:SetPoint("BOTTOMLEFT", idle, "BOTTOMLEFT", CONTENT_X, 6)
+  idleFoot:SetPoint("BOTTOMRIGHT", idle, "BOTTOMRIGHT", -CONTENT_X, 6)
+  if UI.ApplyFootInk then UI.ApplyFootInk(idleFoot) end -- v16 (judge4): the brighter footer ink every pane shares
+  -- v16 (judge4 ring void): "How the ring works" -- an inset plate in the list chrome (dark well, 1 px edge, header
+  -- strip) under the Rings table, gold-dim header, three numbered grey-gold lines; RV.HowVisible gates it.
+  local HOW_HEAD, HOW_LINE = 22, 16
+  local how = CreateFrame("Frame", nil, idle)
+  local kit = MK.UI
+  local inBg = kit.ListInsetBg or { 0, 0, 0, 0.35 }
+  local inEdge = kit.ListInsetEdge or { 61 / 255, 46 / 255, 32 / 255, 1 }
+  local inHead = kit.ListHeaderStrip or { 0, 0, 0, 0.35 }
+  local hbg = how:CreateTexture(nil, "BACKGROUND", nil, -8)
+  hbg:SetAllPoints(how); hbg:SetColorTexture(inBg[1], inBg[2], inBg[3], inBg[4] or 1)
+  for _, e in ipairs({ { "TOPLEFT", "TOPRIGHT", true }, { "BOTTOMLEFT", "BOTTOMRIGHT", true },
+      { "TOPLEFT", "BOTTOMLEFT" }, { "TOPRIGHT", "BOTTOMRIGHT" } }) do
+    local t = how:CreateTexture(nil, "BORDER")
+    t:SetPoint(e[1], how, e[1], 0, 0); t:SetPoint(e[2], how, e[2], 0, 0)
+    if e[3] then t:SetHeight(1) else t:SetWidth(1) end
+    t:SetColorTexture(inEdge[1], inEdge[2], inEdge[3], inEdge[4] or 1)
+  end
+  local hstrip = how:CreateTexture(nil, "BACKGROUND", nil, -7)
+  hstrip:SetPoint("TOPLEFT", how, "TOPLEFT", 1, -1); hstrip:SetPoint("TOPRIGHT", how, "TOPRIGHT", -1, -1)
+  hstrip:SetHeight(HOW_HEAD); hstrip:SetColorTexture(inHead[1], inHead[2], inHead[3], inHead[4] or 1)
+  local howTitle = label(how, RV.HOW_TITLE, "small")
+  howTitle:SetTextColor(unpack(RV.HOW_TITLE_INK)); howTitle.mkColor = RV.HOW_TITLE_INK
+  howTitle:SetPoint("LEFT", how, "TOPLEFT", CONTENT_X, -(1 + HOW_HEAD / 2))
+  local howLines = {}
+  for i, text in ipairs(RV.HOW_LINES) do
+    local l = label(how, text, "body")
+    if l.SetWordWrap then l:SetWordWrap(false) end
+    l:SetTextColor(unpack(RV.HOW_INK)); l.mkColor = RV.HOW_INK
+    l:SetPoint("TOPLEFT", how, "TOPLEFT", CONTENT_X, -(1 + HOW_HEAD + 6 + (i - 1) * HOW_LINE))
+    l:SetPoint("TOPRIGHT", how, "TOPRIGHT", -CONTENT_X, -(1 + HOW_HEAD + 6 + (i - 1) * HOW_LINE))
+    howLines[i] = l
+  end
+  local HOW_H = 1 + HOW_HEAD + 6 + #RV.HOW_LINES * HOW_LINE + 8
+  how:SetHeight(HOW_H)
+  how:Hide()
+  box.how, box.howTitle, box.howLines, box.howH = how, howTitle, howLines, HOW_H
+  -- Top-down: header row, rule, helper, referee table (2 rows when empty, up to 6), section gap, Rings header, rule,
+  -- rings table (2 rows when empty, else down to the footer), footer line.
+  local LIST_TOP = -56
+  local function idleLayout(nRef, nRing)
+    local refRows = nRef == 0 and 2 or math.max(2, math.min(6, nRef))
+    local refH = refList:HeightFor(refRows)
+    refList:ClearAllPoints()
+    refList:SetPoint("TOPLEFT", idle, "TOPLEFT", 0, LIST_TOP)
+    refList:SetPoint("TOPRIGHT", idle, "TOPRIGHT", 0, LIST_TOP)
+    refList:SetHeight(refH)
+    local bhY = LIST_TOP - refH - SECTION_GAP
+    bh:ClearAllPoints(); bh:SetPoint("TOPLEFT", idle, "TOPLEFT", CONTENT_X, bhY)
+    bhRule:ClearAllPoints()
+    bhRule:SetPoint("TOPLEFT", idle, "TOPLEFT", 0, bhY - 20)
+    bhRule:SetPoint("TOPRIGHT", idle, "TOPRIGHT", 0, bhY - 20)
+    local ringTop = bhY - 26
+    browser:ClearAllPoints()
+    browser:SetPoint("TOPLEFT", idle, "TOPLEFT", 0, ringTop)
+    local ringH
+    if nRing == 0 then
+      ringH = browser:HeightFor(2)
+      browser:SetPoint("TOPRIGHT", idle, "TOPRIGHT", 0, ringTop)
+      browser:SetHeight(ringH)
+    else
+      browser:SetPoint("BOTTOMRIGHT", idle, "BOTTOMRIGHT", 0, FOOT_H)
+    end
+    how:ClearAllPoints()
+    how:SetPoint("TOPLEFT", browser, "BOTTOMLEFT", 0, -SECTION_GAP)
+    how:SetPoint("TOPRIGHT", browser, "BOTTOMRIGHT", 0, -SECTION_GAP)
+    box.idleLayout = { contentX = CONTENT_X, refTop = LIST_TOP, refRows = refRows, refH = refH, ringsHeadY = bhY,
+      ringsTop = ringTop, ringsH = ringH or "fill", footH = FOOT_H,
+      howTop = ringH and (ringTop - ringH - SECTION_GAP) or nil }
+  end
+  idleLayout(0, 0)
+  box.refList, box.browser, box.idleFoot, box.ihRule, box.bhRule = refList, browser, idleFoot, ihRule, bhRule
+  box.idleLayoutFn = idleLayout
   pane.idle, pane.refList = idle, refList
 
   ---- live view: header ----------------------------------------------------
@@ -584,11 +837,26 @@ local function build(pane)
   hostBar:SetPoint("TOPRIGHT", live, "TOPRIGHT", 0, -42)
   hostBar:SetHeight(26)
   box.hostBar = hostBar
-  local pubCheck = k.Checkbox(live, { label = "Public", width = 70, checked = true, onChange = function(on) ring("SetPublic", on) end })
-  pubCheck:SetPoint("TOPRIGHT", live, "TOPRIGHT", -96, -2)
-  local autoCheck = k.Checkbox(live, { label = "Auto-invite", width = 92, checked = false, onChange = function(on) ring("SetAutoInvite", on) end })
-  autoCheck:SetPoint("TOPRIGHT", live, "TOPRIGHT", 0, -2)
+  local pubCheck = k.Checkbox(live, { label = "Public", checked = true, onChange = function(on) ring("SetPublic", on) end })
+  local autoCheck = k.Checkbox(live, { label = "Auto-invite", checked = false, onChange = function(on) ring("SetAutoInvite", on) end })
   box.pubCheck, box.autoCheck = pubCheck, autoCheck
+  -- Session header row, same rule as the idle one: measured checkbox widths, HEAD_GAP apart, right-aligned; the host's
+  -- status line (fixed 440) is clipped to end HEAD_GAP before them. box.liveHead records the geometry.
+  local function liveHead(isHost)
+    local pubW, autoW = UI.CheckWidth(pubCheck), UI.CheckWidth(autoCheck)
+    pubCheck:SetWidth(pubW); autoCheck:SetWidth(autoW)
+    autoCheck:ClearAllPoints(); pubCheck:ClearAllPoints()
+    autoCheck:SetPoint("TOPRIGHT", live, "TOPRIGHT", -HEAD_PAD, -2)
+    pubCheck:SetPoint("TOPRIGHT", autoCheck, "TOPLEFT", -HEAD_GAP, 0)
+    local rowW = live:GetWidth() or 0
+    local checksW = HEAD_PAD + autoW + HEAD_GAP + pubW
+    local statusW = 440
+    if isHost and rowW > 0 then statusW = math.max(120, math.min(440, rowW - 8 - checksW - HEAD_GAP)) end
+    status:SetWidth(statusW)
+    box.liveHead = { pubW = pubW, autoW = autoW, gap = HEAD_GAP, pad = HEAD_PAD, rowW = rowW, statusW = statusW }
+  end
+  box.liveHeadLayout = liveHead
+  liveHead(false)
   local addBtn = button(hostBar, "+ Market", 76, function() st.create = not st.create; refresh() end, "accent")
   local quickBtn = button(hostBar, "Quick winner", 96, function()
     local s = session()
@@ -661,6 +929,66 @@ local function build(pane)
     myBets:SetPoint("BOTTOMRIGHT", left, "BOTTOMRIGHT", 0, 0)
   end
   box.myBets = myBets
+
+  -- Unmatched gold (host, G4): a header plus up to five trade rows at the bottom of the left column; each row books
+  -- itself with Assign when the partner has exactly one bet waiting for that money (Ledger.Assign -> Ring.AssignTrade).
+  local UM_ROW, UM_HEAD = 20, 18
+  local um = CreateFrame("Frame", nil, left)
+  um:SetPoint("BOTTOMLEFT", left, "BOTTOMLEFT", 0, 0)
+  um:SetPoint("BOTTOMRIGHT", left, "BOTTOMRIGHT", 0, 0)
+  um:SetHeight(UM_HEAD)
+  local umHead = label(um, "", "small", "bad", 330)
+  umHead:SetPoint("TOPLEFT", um, "TOPLEFT", 8, -2)
+  local umRows = {}
+  for i = 1, RV.UNMATCHED_ROWS do
+    local line = CreateFrame("Frame", nil, um)
+    line:SetHeight(UM_ROW)
+    line:SetPoint("TOPLEFT", um, "TOPLEFT", 0, -(UM_HEAD + (i - 1) * UM_ROW))
+    line:SetPoint("TOPRIGHT", um, "TOPRIGHT", 0, -(UM_HEAD + (i - 1) * UM_ROW))
+    local txt = label(line, "", "small", "muted", 250)
+    txt:SetPoint("LEFT", line, "LEFT", 8, 0)
+    local btn = button(line, "Assign", 60, function()
+      local row = line.row
+      local s = session()
+      if not (row and s) then return end
+      local cand, why = RV.UnmatchedCandidate(row.tr, s, st.mid)
+      if not cand then
+        A:Print(why == "many" and (row.from .. " has several bets waiting: select their market, then Assign.")
+          or ("No open bet from " .. row.from .. " fits this trade."))
+        return
+      end
+      local ok = ns.Ledger and ns.Ledger.Assign and UI.Try(ns.Ledger.Assign, row.tr, cand.sid, cand.mid, cand.bettor)
+      A:Print(ok and ("Booked " .. row.amount .. " from " .. row.from .. " to " .. cand.mid .. ".")
+        or ("Could not book that trade to " .. cand.mid .. "."))
+      refresh()
+    end)
+    btn:SetPoint("RIGHT", line, "RIGHT", -4, 0)
+    umRows[i] = { frame = line, text = txt, button = btn }
+  end
+  um:Hide()
+  box.um, box.umHead, box.umRows = um, umHead, umRows
+  local function unmatchedView(s, isHost)
+    local data = isHost and RV.Unmatched(s, st.mid) or { count = 0, rows = {}, text = "" }
+    local h = data.count > 0 and (UM_HEAD + #data.rows * UM_ROW) or 0
+    um:SetShown(h > 0)
+    um:SetHeight(max(h, 1))
+    umHead:SetText(data.text)
+    for i, r in ipairs(umRows) do
+      local row = data.rows[i]
+      r.frame.row = row
+      r.frame:SetShown(row ~= nil)
+      if row then
+        r.text:SetText(string.format("%s%s · %s · %s ago", row.dir == "out" and "paid out " or "", row.amount, row.from, row.age))
+        enable(r.button, row.cand ~= nil or row.why == "many")
+      end
+    end
+    -- the bets table gives up the strip the unmatched rows use
+    betsList:ClearAllPoints()
+    betsList:SetPoint("TOPLEFT", left, "TOPLEFT", 0, -180)
+    betsList:SetPoint("BOTTOMRIGHT", left, "BOTTOMRIGHT", 0, h)
+    return data
+  end
+  box.unmatchedView = unmatchedView
 
   ---- live view: right column (market detail) -------------------------------
   local right = CreateFrame("Frame", nil, live)
@@ -845,6 +1173,16 @@ local function build(pane)
   local titleBox = k.EditBox(create, { width = 180, height = 22, maxLetters = 32, placeholder = "Title (optional)",
     onChange = function(t) st.form.title = t end })
   titleBox:SetPoint("TOPLEFT", create, "TOPLEFT", 4, -82)
+  -- Series (G2): "Best of" names an upcoming series (a live one supplies its own); "Applies to" picks next round or the
+  -- series winner. Both only show where they matter.
+  local boDD = k.Dropdown(create, { width = 56, items = { item("1", "Bo1"), item("3", "Bo3"), item("5", "Bo5") },
+    onSelect = function(v) st.form.bo = tonumber(UI.Val(v)) or 1; refresh() end })
+  boDD:SetPoint("LEFT", titleBox, "RIGHT", 6, 0)
+  local scopeDD = k.Dropdown(create, { width = 108, items = { item("fight", "Next round"), item("series", "Series winner") },
+    onSelect = function(v) st.form.scope = UI.Val(v) or "fight"; refresh() end })
+  scopeDD:SetPoint("LEFT", boDD, "RIGHT", 6, 0)
+  if boDD.SetValue then boDD:SetValue("1") end
+  if scopeDD.SetValue then scopeDD:SetValue("fight") end
   local pricesBox = k.EditBox(create, { width = 180, height = 22, maxLetters = 60, placeholder = "Prices: 1.80, 2.10",
     onChange = function(t) st.form.prices = t end })
   pricesBox:SetPoint("TOPLEFT", create, "TOPLEFT", 4, -112)
@@ -874,6 +1212,7 @@ local function build(pane)
   local cancelB = button(create, "Cancel", 64, function() st.create = false; refresh() end)
   cancelB:SetPoint("LEFT", draftB, "RIGHT", 6, 0)
   box.kindDD, box.modeDD, box.lockDD, box.minBox, box.fighterA, box.fighterB = kindDD, modeDD, lockDD, minBox, fighterA, fighterB
+  box.boDD, box.scopeDD = boDD, scopeDD
   box.labelsBox, box.scoreL, box.pricesBox, box.bankBox, box.bankHint, box.createErr = labelsBox, scoreL, pricesBox, bankBox, bankHint, createErr
   box.createB, box.draftB = createB, draftB
   box.form = st.form
@@ -1062,6 +1401,9 @@ local function build(pane)
       info = #owed > 0 and ("Trade " .. table.concat(owed, ", ")) or (stt == "void" and "Void: stakes back." or "Settled. All paid out.")
       if (tonumber(m.dust) or 0) > 0 then info2 = "Dust kept: " .. UI.Amount(m.dust, s.currency) end
     end
+    if m and m.pending and not FINAL[stt] then
+      info2 = (info2 ~= "" and (info2 .. "  ·  ") or "") .. "Series pending: binds when " .. UI.Short(m.a) .. " vs " .. UI.Short(m.b) .. " start."
+    end
     if fixed and m and (tonumber(m.bank) or 0) > 0 then
       info2 = (info2 ~= "" and (info2 .. "  ·  ") or "") .. "bank " .. UI.Amount(m.bank, s.currency) .. " (self-declared)"
     end
@@ -1084,14 +1426,23 @@ local function build(pane)
     if fighterA.SetItems then fighterA:SetItems(items); fighterB:SetItems(items) end
     if not f.a and fa and fighterA.SetValue then f.a = fa; fighterA:SetValue(fa) end
     if not f.b and fb and fighterB.SetValue then f.b = fb; fighterB:SetValue(fb) end
-    local two = f.kind == "winner" or f.kind == "method"
+    local bo, live = RV.SeriesBo(s, f)
+    local seriesKind = f.kind == "winner" or f.kind == "score"
+    boDD:SetShown(seriesKind and not live)
+    scopeDD:SetShown(f.kind == "winner" and bo ~= nil and bo > 1)
+    local scoped = (f.kind == "winner" and f.scope == "series" and bo ~= nil and bo > 1) or f.kind == "score"
+    -- fighters: any fight market; an upcoming series (not live yet) names its two as well
+    local two = f.kind == "winner" or f.kind == "method" or (f.kind == "score" and not live)
+    if live and scoped then two = false end
     fighterA:SetShown(two)
     fighterB:SetShown(two)
     labelsBox:SetShown(f.kind == "custom")
     scoreL:SetShown(f.kind == "score")
-    local bo = s.series and tonumber(s.series.bo)
-    scoreL:SetText((bo == 3 and "bo3: 2-0, 2-1, 1-2, 0-2") or (bo == 5 and "bo5: 3-0, 3-1, 3-2, 2-3, 1-3, 0-3")
+    scoreL:ClearAllPoints()
+    scoreL:SetPoint("TOPLEFT", create, "TOPLEFT", two and 256 or 4, -56)
+    scoreL:SetText(live and ((bo == 3 and "bo3: 2-0, 2-1, 1-2, 0-2") or (bo == 5 and "bo5: 3-0, 3-1, 3-2, 2-3, 1-3, 0-3")
       or "Score markets need a bo3 / bo5 series.")
+      or ((bo == 3 or bo == 5) and ("bo" .. bo .. " score, " .. UI.Short(f.a or fa or "?") .. " first") or "Pick Bo3 or Bo5."))
     local fixed = f.mode == "fixed"
     pricesBox:SetShown(fixed)
     bankBox:SetShown(fixed)
@@ -1108,16 +1459,24 @@ local function build(pane)
     local s = session()
     idle:SetShown(not s)
     live:SetShown(s and true or false)
+    if s then how:Hide() end
     if not s then
       local on = A.db.config.referee.available
       refCheck:SetChecked(on)
       openBtn:SetShown(on and true or false)
+      idleHead()
       local rows = finderRows({ "ref" })
       refList:SetData(rows)
       if not ns.Finder and refList.SetEmptyText then refList:SetEmptyText("Finder unavailable.") end
-      browser:SetData(browserRows())
+      local brows = browserRows()
+      browser:SetData(brows)
+      idleLayout(#rows, #brows)
+      how:SetShown(RV.HowVisible(#rows, #brows, false))
+      local v = ns.venues and UI.Try(ns.venues.Current, ns.venues)
+      idleFoot:SetText(RV.IdleFooter(#rows, #brows, type(v) == "table" and (v.name or UI.VenueName(v.id)) or nil))
       st.mid, st.outIdx, st.create = nil, nil, false
       UI.RingSelected = nil
+      box.unmatchedView(nil, false)
       return
     end
     local isHost = RV.IsHost(s)
@@ -1135,6 +1494,7 @@ local function build(pane)
     hostBar:SetShown(isHost)
     pubCheck:SetShown(isHost)
     autoCheck:SetShown(isHost)
+    liveHead(isHost)
     specBar:SetShown(not isHost)
     if isHost then
       pubCheck:SetChecked(s.public ~= false)
@@ -1159,7 +1519,7 @@ local function build(pane)
     detailBox:SetShown(not creating)
     if m then
       local bits = { KIND_LABEL[m.kind] or "?", m.mode == "fixed" and "fixed odds" or "parimutuel", #m.outcomes .. " outcomes" }
-      if m.scope == "series" then bits[#bits + 1] = "series" end
+      if m.scope == "series" then bits[#bits + 1] = m.pending and "series (pending)" or "series" end
       mTitle:SetText((m.title or m.mid) .. "  " .. UI.Tint("muted", "(" .. table.concat(bits, " · ") .. ")"))
       mSub:SetText("Status: " .. RV.MarketStatus(m))
     else
@@ -1175,9 +1535,11 @@ local function build(pane)
       betsList:SetShown(true)
       if myBets then myBets:SetShown(false) end
       betsList:SetData(hostBetRows(s, m))
+      box.unmatchedView(s, true)
       hostControls(s, m)
       if creating then createForm(s) end
     else
+      box.unmatchedView(s, false)
       lowerH:SetText("My bets")
       if myBets then
         betsList:SetShown(false)

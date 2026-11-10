@@ -13,7 +13,8 @@
 --   level "off"       nothing
 --   level "headline"  (default) duel start / first blood / a side under 20% HP / finish; series result; ring opened,
 --                     betting open, locked, verdict, void, payouts summary
---   level "full"      adds the countdown, the half-health beat, each series round, the pool at lock, disputes, ring closed
+--   level "full"      adds the countdown, the half-health beat, each series round, the pool at lock, ring closed
+-- Disputes (raised, upheld, amended) are headline lines: bettors need to hear that a verdict is under review.
 -- Ring lines are only said by the host; a ring that is not public goes to the group instead of /say.
 -- CONTRACT NOTE: a ring found already running when the addon loads (reload) is adopted silently: only changes after that
 --   are announced, never a replay of old states.
@@ -58,7 +59,7 @@ local function short(n) return D.Short(n) end
 -- Extension narrators (MK.Ext kind "narrator"): said right after our own line for the same event, same scope and
 -- route, through the same sink, so MK.Chat's pacing, dedupe and caps apply. Never important: a capped sink drops them
 -- before our own lines. A missing MK.Ext (older MetaKit copy) or a failing provider changes nothing.
--- categories: fight_start first_blood kill flee series_done ring_verdict. ctx is best-effort, always has `source`.
+-- categories: fight_start first_blood kill flee series_done ring_verdict ring_dispute (ctx.stage disputed|upheld|amended). ctx is best-effort, always has `source`.
 local function extSay(category, ctx, opts)
   local E = MK.Ext
   if type(E) ~= "table" or type(E.NarratorLines) ~= "function" then return end
@@ -242,10 +243,24 @@ local function onMarket(s, m, prev)
     ringSay(s, 1, string.format("%s is void, all bets refunded.", title), true)
   elseif cur == "settled" then
     local n, paid = counted(m)
+    local d = m.dispute
+    if d and d.action == "uphold" then
+      ringSay(s, 1, "The referee upholds the verdict.", true)
+      extSay("ring_dispute", { title = title, kind = m.kind, mid = m.mid, stage = "upheld", by = d.by, code = d.code },
+        { scope = "ring:" .. tostring(s.id), route = (not s.public) and "group" or nil })
+    elseif d and d.action == "amend" then
+      local o = m.outcomes and m.outcomes[m.result]
+      ringSay(s, 1, string.format("The referee amends the verdict on %s: %s!", title, o and o.label or "?"), true)
+      extSay("ring_dispute", { title = title, kind = m.kind, mid = m.mid, stage = "amended", by = d.by, code = d.code,
+        outcome = o and o.label, ref = o and o.ref }, { scope = "ring:" .. tostring(s.id), route = (not s.public) and "group" or nil })
+    end
     ringSay(s, 1, n == 0 and string.format("%s settled: no bets.", title)
       or string.format("%s settled: %d bets, %s paid out.", title, n, amount(s, paid)), true)
   elseif cur == "disputed" then
-    ringSay(s, 2, string.format("A dispute was raised on %s.", title))
+    ringSay(s, 1, string.format("The verdict for %s is disputed — the referee reviews.", title))
+    local d = m.dispute or {}
+    extSay("ring_dispute", { title = title, kind = m.kind, mid = m.mid, stage = "disputed", by = d.by, code = d.code },
+      { scope = "ring:" .. tostring(s.id), route = (not s.public) and "group" or nil })
   end
 end
 

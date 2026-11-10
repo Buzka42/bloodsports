@@ -182,6 +182,12 @@ local function onResolved(rec)
   local s = Series.Active()
   local tag = type(rec) == "table" and rec.series
   if not s or type(tag) ~= "table" or tag.id ~= s.id then return end
+  -- a duel is one round (or one void) however often its record is announced
+  if rec.id then
+    if s.lastRec == rec.id then return end
+    for _, r in ipairs(s.rounds) do if r.duel == rec.id then return end end
+    s.lastRec = rec.id
+  end
   if rec.result == "win" or rec.result == "loss" then return onRound(s, rec) end
   -- void duel (timeout / unknown): replay the round; repeated voids void the series
   s.voids = (s.voids or 0) + 1

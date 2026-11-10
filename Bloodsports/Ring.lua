@@ -727,7 +727,40 @@ local function defaultTitle(kind, bo)
   return "Custom"
 end
 
--- spec = { kind, scope, title, labels (custom), a, b (fighters), mode, prices = { ... }, bank, lockOn, lockAt, open }
+local function livingSeries(s) return s.series and not s.series.done and s.series or nil end
+
+local function samePair(a1, b1, a2, b2)
+  return (same(a1, a2) and same(b1, b2)) or (same(a1, b2) and same(b1, a2))
+end
+
+-- Host: the upcoming series (fighters + best-of) that series markets created before SERIES_START are bound to. The
+-- context is only ever replaced while no pending series market is still waiting on it. bo other than 3 or 5 clears it.
+function Ring.SetPendingSeries(a, b, bo)
+  local s = Ring.session
+  if not isHost(s) or s.status ~= "open" then return false, "session" end
+  local p = s.pendingSeries
+  local function waiting()
+    for _, m in pairs(s.markets) do
+      if m.pending and not FINAL[m.status] then return true end
+    end
+  end
+  bo = tonumber(bo)
+  if bo ~= 3 and bo ~= 5 then
+    if waiting() then return false, "pending" end
+    s.pendingSeries = nil
+    return true
+  end
+  a, b = full(a), full(b)
+  if not a or not b or same(a, b) then return false, "fighters" end
+  if p and (p.bo ~= bo or not samePair(p.a, p.b, a, b)) and waiting() then return false, "pending" end
+  if not p or p.bo ~= bo or not samePair(p.a, p.b, a, b) then s.pendingSeries = { a = a, b = b, bo = bo } end
+  return s.pendingSeries
+end
+
+-- spec = { kind, scope, title, labels (custom), a, b (fighters), bo (3|5: series market before the series starts),
+--          mode, prices = { ... }, bank, lockOn, lockAt, open }
+-- A series market made while a series is live binds to it at once; made before, it waits (m.pending) for the next
+-- SERIES_START of the same fighters and bo, and is voided if a different series starts instead.
 function Ring.AddMarket(spec)
   local s = Ring.session
   if not isHost(s) or s.status ~= "open" then return false, "session" end
@@ -738,10 +771,24 @@ function Ring.AddMarket(spec)
   local scope = spec.scope == "series" and "series" or "fight"
   if ext then scope = (ext.def.scope or scope) == "series" and "series" or "fight" end
   if kind == "score" then scope = "series" end
-  if scope == "series" and not s.series then return false, "series" end
+  local live, pending = livingSeries(s), nil
+  local sctx
+  if scope == "series" then
+    if live then
+      sctx = live
+    else
+      local p = s.pendingSeries
+      local sbo = tonumber(spec.bo) or (p and p.bo)
+      if sbo ~= 3 and sbo ~= 5 then return false, "series" end
+      local ctx, why = Ring.SetPendingSeries(spec.a or (p and p.a), spec.b or (p and p.b), sbo)
+      if type(ctx) ~= "table" then return false, why end
+      sctx, pending = ctx, true
+    end
+  end
   local mode = spec.mode == "fixed" and "fixed" or "pari"
-  local fa, fb = full(spec.a or (s.series and s.series.a) or s.fighters.a), full(spec.b or (s.series and s.series.b) or s.fighters.b)
-  local outcomes, bo = {}, s.series and s.series.bo or nil
+  local cur = sctx or s.series
+  local fa, fb = full(spec.a or (cur and cur.a) or s.fighters.a), full(spec.b or (cur and cur.b) or s.fighters.b)
+  local outcomes, bo = {}, cur and cur.bo or nil
   if kind == "winner" or kind == "method" then
     if not fa or not fb or fa:lower() == fb:lower() then return false, "fighters" end
     if kind == "winner" then
@@ -781,9 +828,10 @@ function Ring.AddMarket(spec)
   end
   s.nextMid = (s.nextMid or 0) + 1
   touch(s)
-  local m = { mid = "m" .. s.nextMid, kind = kind, scope = scope, title = clean(spec.title or (ext and ext.def.label) or defaultTitle(kind, bo), TITLE_MAX),
+  local m = { mid = "m" .. s.nextMid, kind = kind, scope = scope, title = clean(spec.title or (ext and ext.def.label) or (scope == "series" and kind == "winner" and "Series winner") or defaultTitle(kind, bo), TITLE_MAX),
     outcomes = outcomes, mode = mode, bank = mode == "fixed" and floor(tonumber(spec.bank) or 0) or 0, status = "draft",
-    lockOn = lockOn, lockAt = lockAt, result = 0, fight = 0, auto = false, dust = 0, bets = {}, a = fa, b = fb, rev = s.rev }
+    lockOn = lockOn, lockAt = lockAt, result = 0, fight = 0, auto = false, dust = 0, bets = {}, a = fa, b = fb, rev = s.rev,
+    sid = scope == "series" and live and live.id or nil, pending = pending or nil }
   s.markets[m.mid] = m
   markDirty(s, m, "all", true)
   if spec.open then
@@ -1512,33 +1560,200 @@ local function onSystem(_, text)
   extSettle(s, { type = "fight_end", winner = w, loser = l, how = how }, "fight", w, l)
 end
 
+-- Series markets made before the series existed (m.pending) bind to it here, or refund when another series starts.
+local function bindPendingSeries(s)
+  local p, sr = s.pendingSeries, s.series
+  s.pendingSeries = nil
+  local match = p and sr.bo == p.bo and sr.a and sr.b and samePair(p.a, p.b, sr.a, sr.b)
+  local acted
+  for _, m in ipairs(marketList(s)) do
+    if m.pending then
+      if match then
+        m.pending, m.sid, m.rev = nil, sr.id, s.rev
+        markDirty(s, m, "all")
+      elseif voidMarket(s, m, "series") then
+        acted = true
+      end
+    end
+  end
+  return acted
+end
+
 local function onSeriesStart(ev)
   local s = Ring.session
   if not isHost(s) or s.status ~= "open" or type(ev) ~= "table" then return end
   local bo = ev.champion and 5 or (ev.bo == 5 and 5 or ev.bo == 3 and 3 or 1)
-  s.series = { id = clean(ev.id, 16), bo = bo, champion = ev.champion and true or false, a = full(ev.a), b = full(ev.b) }
+  s.series = { id = clean(ev.id, 16), bo = bo, champion = ev.champion and true or false, a = full(ev.a), b = full(ev.b),
+    scoreA = 0, scoreB = 0, round = 0, startedAt = now() }
   if s.series.a and s.series.b and not s.fighters.a then s.fighters = { a = s.series.a, b = s.series.b } end
   touch(s)
+  bindPendingSeries(s)
   push("open", s, { cap = s.cap, public = s.public, series = s.series.id })
   flushNow(s)
   updated()
 end
 
+local function onSeriesRound(ev)
+  local s = Ring.session
+  if not isHost(s) or type(ev) ~= "table" or not livingSeries(s) or tostring(ev.id) ~= s.series.id then return end
+  s.series.round = num(ev.round, 0, 9)
+  s.series.scoreA, s.series.scoreB = num(ev.scoreA, 0, 5), num(ev.scoreB, 0, 5)
+  touch(s)
+end
+
 local function onSeriesDone(ev)
   local s = Ring.session
-  if not isHost(s) or type(ev) ~= "table" or not s.series or tostring(ev.id) ~= s.series.id then return end
-  local score = tostring(ev.scoreA or 0) .. "-" .. tostring(ev.scoreB or 0)
+  if not isHost(s) or type(ev) ~= "table" or not s.series or tostring(ev.id) ~= s.series.id or s.series.done then return end
+  local sr = s.series
+  -- A void series (timeout, replayed rounds, cancel) has no winner: every series market refunds.
+  local voided = ev.void or not ev.winner
+  sr.done, sr.doneAt, sr.void, sr.winner = true, now(), voided and true or nil, ev.winner
+  sr.scoreA, sr.scoreB = num(ev.scoreA, 0, 5), num(ev.scoreB, 0, 5)
+  local acted
   for _, m in ipairs(marketList(s)) do
-    if m.scope == "series" and (m.status == "open" or m.status == "locked") then
+    -- bound markets settle with their own series; unbound legacy ones (no sid, not pending) with the current one
+    local mine = m.sid == sr.id or (not m.sid and not m.pending)
+    if m.scope == "series" and mine and (m.status == "open" or m.status == "locked") then
       local idx
-      if m.kind == "winner" then idx = outcomeOfRef(m, ev.winner)
-      elseif m.kind == "score" then
-        for i, o in ipairs(m.outcomes) do if o.label == score then idx = i end end
+      if not voided then
+        if m.kind == "winner" then idx = outcomeOfRef(m, ev.winner)
+        elseif m.kind == "score" then
+          -- labels read the market's first fighter first, whichever side the series calls A
+          local sa, sb = tostring(ev.scoreA or 0), tostring(ev.scoreB or 0)
+          local score = sa .. "-" .. sb
+          if m.a and same(m.a, ev.b or sr.b) and not same(m.a, ev.a or sr.a) then score = sb .. "-" .. sa end
+          for i, o in ipairs(m.outcomes) do if o.label == score then idx = i end end
+        end
       end
-      if idx then verdict(s, m, idx, true) end
+      if idx then
+        verdict(s, m, idx, true)
+      elseif voided or m.kind == "winner" or m.kind == "score" then
+        -- no outcome to pay (void series, or a forfeit score like 1-0 in a bo3): refund instead of hanging open
+        if voidMarket(s, m, "series") then acted = true end
+      end
     end
   end
-  extSettle(s, { type = "series_done", winner = ev.winner, scoreA = ev.scoreA, scoreB = ev.scoreB, bo = s.series.bo }, "series")
+  if acted then
+    flushNow(s)
+    updated()
+    maybeFinishClosing(s)
+  end
+  if not voided then
+    extSettle(s, { type = "series_done", winner = ev.winner, scoreA = ev.scoreA, scoreB = ev.scoreB, bo = sr.bo }, "series")
+  end
+end
+
+---------------------------------------------------------------------------
+-- Series relay (R2R): SERIES_* fire only on the fighters' own clients. A fighter in somebody else's ring whispers the
+-- series state to the referee, who feeds it to the handlers above (never to the addon-wide SERIES_* events: Club and
+-- the Narrator would count a series this client did not play). Both fighters report; the referee takes the first
+-- report of each phase and drops the other fighter's copy. A referee who is a fighter trusts only the local events.
+
+local RELAY_DUPE_SEC = 8
+local RELAY_PHASE = { s = "start", r = "round", d = "done" }
+local RELAY_CODE = { start = "s", round = "r", done = "d" }
+
+function W.R2R(s, phase, ev)
+  return { s.id, RELAY_CODE[phase], clean(ev.a, NAME_MAX), clean(ev.b, NAME_MAX), tostring(ev.bo or 1), tostring(ev.scoreA or 0),
+    tostring(ev.scoreB or 0), clean(ev.winner, NAME_MAX), (ev.champion and "1" or "0") .. (ev.void and "1" or "0"),
+    tostring(ev.round or 0), clean(ev.id, 16) }
+end
+
+-- Fighter side: only series with a best-of (a bo1 is just the duel), only while joined to a ring.
+local function relaySend(phase)
+  return function(ev)
+    local s = Ring.session
+    if not s or isHost(s) or not s.v2 or not s.host or s.status == "closed" or not ns.comm then return end
+    if type(ev) ~= "table" then return end
+    if not ev.bo then
+      -- SERIES_ROUND carries the score, not the series: the fighter's own Series state names the sides and the format
+      local cur = ns.Series and ns.Series.Active and ns.Series.Active()
+      if not cur or cur.id ~= ev.id then return end
+      local copy = {}
+      for k, v in pairs(ev) do copy[k] = v end
+      copy.a, copy.b, copy.bo, copy.champion = cur.a, cur.b, cur.bo, cur.champion
+      ev = copy
+    end
+    if (tonumber(ev.bo) or 1) < 3 then return end
+    whisper("R2R", W.R2R(s, phase, ev), s.host)
+  end
+end
+
+local function pairKey(a, b, bo)
+  local x, y = shortLower(a), shortLower(b)
+  if x > y then x, y = y, x end
+  return x .. "|" .. y .. "|" .. bo
+end
+
+-- A reporter must be somebody this ring already knows as a fighter (set fighters, a live or waiting series, the two
+-- sides of a market that is not over), else a member of the referee's group: a stranger cannot void a running series.
+local function relayKnown(s, name)
+  local f, p, sr = s.fighters or {}, s.pendingSeries, s.series
+  if same(name, f.a) or same(name, f.b) or (p and (same(name, p.a) or same(name, p.b)))
+    or (sr and not sr.done and (same(name, sr.a) or same(name, sr.b))) then return true end
+  for _, m in pairs(s.markets) do
+    if not FINAL[m.status] and (same(name, m.a) or same(name, m.b)) then return true end
+  end
+  return inGroup(name)
+end
+
+-- ev = { phase = "start"|"round"|"done", id, a, b, bo, champion, scoreA, scoreB (from a's side), round, winner, void }.
+-- Returns true when it changed the ring, else false + why (session|event|sender|local|dupe).
+function Ring.OnSeriesRelay(ev, sender)
+  local s = Ring.session
+  if not isHost(s) or s.status == "closed" or type(ev) ~= "table" then return false, "session" end
+  local phase = ev.phase
+  local a, b, bo, sid = full(ev.a), full(ev.b), tonumber(ev.bo), clean(ev.id, 16)
+  if not RELAY_CODE[phase] or not a or not b or same(a, b) or (bo ~= 3 and bo ~= 5) or sid == "" then return false, "event" end
+  if sender and not (same(sender, a) or same(sender, b)) then return false, "sender" end
+  if same(a, me()) or same(b, me()) then return false, "local" end
+  if sender and not relayKnown(s, sender) then return false, "sender" end
+  local cur = s.series
+  if cur and not cur.done and not cur.relay then return false, "local" end
+  local key = pairKey(a, b, bo)
+  local live = livingSeries(s)
+  local known = cur and cur.relay and cur.key == key
+  if known and live then
+    cur.ids[sid] = true
+    if phase == "start" then return false, "dupe" end
+  else
+    if known and (cur.ids[sid] or now() - (cur.doneAt or 0) < RELAY_DUPE_SEC) then
+      cur.ids[sid] = true
+      if phase == "done" and (ev.void and not cur.void or (not ev.void and ev.winner and cur.winner and not same(ev.winner, cur.winner))) then
+        A:Print("The two fighters report different series results (" .. shortName(a) .. " vs " .. shortName(b) .. "). Check the verdict.")
+      end
+      return false, "dupe"
+    end
+    -- a new series, or one whose start was lost on the way
+    if live then
+      onSeriesDone({ id = live.id, a = live.a, b = live.b, void = true, scoreA = live.scoreA, scoreB = live.scoreB })
+    end
+    onSeriesStart({ id = sid, bo = bo, champion = ev.champion, a = a, b = b })
+    local sr = s.series
+    if not sr or sr.id ~= sid then return false, "session" end
+    sr.relay, sr.key, sr.ids = true, key, { [sid] = true }
+    if phase == "start" then return true end
+  end
+  local sr = s.series
+  local sA, sB = num(ev.scoreA, 0, 5), num(ev.scoreB, 0, 5)
+  if same(a, sr.b) and not same(a, sr.a) then sA, sB = sB, sA end -- the report counts from its own sender's side
+  if phase == "round" then
+    local n = num(ev.round, 0, 9)
+    if n <= (sr.round or 0) then return false, "dupe" end
+    onSeriesRound({ id = sr.id, round = n, scoreA = sA, scoreB = sB })
+  else
+    onSeriesDone({ id = sr.id, a = sr.a, b = sr.b, winner = ev.winner, void = ev.void, scoreA = sA, scoreB = sB })
+  end
+  return true
+end
+
+local function onR2R(sender, f)
+  local s = Ring.session
+  if not isHost(s) or f[1] ~= s.id or not validId(f[11]) then return end
+  local flagsStr = f[9] or ""
+  Ring.OnSeriesRelay({ phase = RELAY_PHASE[f[2]], a = f[3], b = f[4], bo = f[5], scoreA = f[6], scoreB = f[7],
+    winner = f[8] ~= "" and f[8] or nil, champion = flagsStr:sub(1, 1) == "1", void = flagsStr:sub(2, 2) == "1",
+    round = f[10], id = f[11] }, sender)
 end
 
 ---------------------------------------------------------------------------
@@ -1795,7 +2010,8 @@ function Ring.AssignTrade(tr, sid, mid, bettor)
       if not b then return false end
       tr.matched = tr.matched or {}
       if (tr.got or 0) > 0 and (tr.gave or 0) == 0 then
-        if b.paid or FINAL[m.status] then return false end
+        -- a stake counts only before the verdict: later, the pools and payouts are already fixed without it
+        if b.paid or (m.status ~= "open" and m.status ~= "locked") then return false end
         applyPaid(s, m, b, tr, true)
       elseif (tr.gave or 0) > 0 and (tr.got or 0) == 0 then
         local left = (b.payout or 0) - (b.paidOutAmount or 0)
@@ -2413,7 +2629,11 @@ A:Listen("RING_UPDATED", function()
 end)
 
 A:Listen("SERIES_START", onSeriesStart)
+A:Listen("SERIES_ROUND", onSeriesRound)
 A:Listen("SERIES_DONE", onSeriesDone)
+A:Listen("SERIES_START", relaySend("start"))
+A:Listen("SERIES_ROUND", relaySend("round"))
+A:Listen("SERIES_DONE", relaySend("done"))
 
 function M:OnLogin()
   if ns.comm then
@@ -2433,6 +2653,7 @@ function M:OnLogin()
     c:On("R2D", onR2D)
     c:On("R2Q", onR2Q)
     c:On("R2J", onR2J)
+    c:On("R2R", onR2R)
   end
   A:On("CHAT_MSG_SYSTEM", onSystem)
   A:On("GROUP_ROSTER_UPDATE", onRoster)

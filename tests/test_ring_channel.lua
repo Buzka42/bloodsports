@@ -253,6 +253,8 @@ T.test("every message type at maximum field widths stays <= 255 bytes; text trun
     R2A = W.R2A(s), R2S = W.R2S(s), R2M = W.R2M(s, m), R2O = W.R2O(s, m, 8), R2L = W.R2L(s, m, b),
     R2B = W.R2B(s.id, "m8", 8, BIG, 1000, "ffffffff"), R2X = W.R2X(s.id, "m8", "ffffffff", "version", BIG),
     R2D = W.R2D(s.id, "m8", "wrong", string.rep("\195\159", 60)), R2Q = W.R2Q(s.id, BIG, "l"), R2J = W.R2J(s.id),
+    R2R = W.R2R(s, "done", { a = name, b = name, winner = name, bo = 5, scoreA = 3, scoreB = 2, round = 9, champion = true,
+      void = true, id = string.rep("f", 16) }),
   }
   for typ, f in pairs(msgs) do
     local wire = typ .. "\t" .. table.concat(f, "\t")

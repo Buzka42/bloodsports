@@ -26,6 +26,9 @@ UI.Tex = {
   note = "Interface\\Icons\\INV_Misc_Note_01",
   check = "Interface\\Buttons\\UI-CheckBox-Check",
   arrowDown = "Interface\\Buttons\\UI-ScrollBar-ScrollDownButton-Up",
+  -- v15 (JUDGE3 S3): the dropdown's native arrow button art (18 px, flush right inside the box)
+  dropArrow = "Interface\\ChatFrame\\UI-ChatIcon-ScrollDown-Up",
+  dropArrowDown = "Interface\\ChatFrame\\UI-ChatIcon-ScrollDown-Down",
   star = "Interface\\TargetingFrame\\UI-RaidTargetingIcon_1",
   mmHighlight = "Interface\\Minimap\\UI-Minimap-ZoomButton-Highlight",
   mmBorder = "Interface\\Minimap\\MiniMap-TrackingBorder",
@@ -80,35 +83,41 @@ UI.SiteTokens = {
   -- v5: parchTint 0.82 -> 0.92: dark ink needs a lighter ground (it4 crop: ~2.4:1 effective on the 0.82 tan)
   -- v9: parchTint 0.92 -> 0.87: the sidebar read brighter than the main pane and pulled the eye left (it8); the labels
   -- are #21150d since v7, so the it5 contrast margin covers the darker ground
-  listSep = hex("4a351d", 0.55), ink = hex("2a1a0c"), inkSoft = hex("5a4026"), parchTint = { 0.87, 0.87, 0.87, 1 },
+  -- v14 (JUDGE1 R-2): the 0.87 tint sampled mid-tone (~(153,124,58), L ~0.21; ink capped near 3:1). parchTint goes
+  -- to 1.0, the most the client's vertex colour honours (the judge's ~1.25x lift is clamped at 1), and parchLift, a
+  -- cream wash drawn over the parchment, supplies the rest: 0.87 -> 1.0 alone gives ~(176,143,67); the 0.36 cream
+  -- (255,240,200) blend lands at ~(205,178,115), on the judge's (205,175,120) target.
+  listSep = hex("4a351d", 0.55), ink = hex("2a1a0c"), inkSoft = hex("5a4026"), parchTint = { 1, 1, 1, 1 },
+  parchLift = { 1, 240 / 255, 200 / 255, 0.36 },
+  parchSample = { 153, 124, 58 }, -- it12 sampled ground at the 0.87 tint (0-255), the baseline the lift is sized on
   -- v4: every text colour on the parchment sidebar is dark ink at full alpha (light or grey text on tan read as
   -- disabled in it3). Shell o.sidebarInk = { key = colour } overrides single keys. A flat sidebar keeps light text.
+  -- v14 (JUDGE1 R-2): every nav / summary text path is one recorded-final ink, #1a1006 (26,16,6); on the lifted
+  -- parchment that measures ~8-9:1 (the it12 #3a2810 / #21150d inks read 2.4-3.6:1 on the mid-tone ground).
   sidebarInk = {
-    label = hex("21150d"),        -- section label base ink
-    labelSoft = hex("3a2810"),    -- unselected section label. v5: 4a3418 -> 3a2810; the it4 crop showed 4a3418
-                                  -- reaching the glyphs but blending to #59401e (light taupe) at ~83% AA coverage
-    selected = hex("0e0904"),     -- selected section label, on the gold strip + wash
-    -- v7: 3a2810 -> 21150d. it6 pixel samples had the 3a2810 labels rendering LIGHTER than the green values (taupe)
-    summaryLabel = hex("21150d"), -- summary block labels (Record, Win rate, ...)
-    value = hex("21150d"),        -- summary values
+    label = hex("1a1006"),        -- section label base ink
+    labelSoft = hex("1a1006"),    -- unselected section label (v5 3a2810, v14 1a1006)
+    selected = hex("1a1006"),     -- v14: selected label ink unchanged; the cream wash raises its contrast instead
+    summaryLabel = hex("1a1006"), -- summary block labels (Record, Win rate, ...)
+    value = hex("1a1006"),        -- summary values
     -- v6: good 1f7a12 -> 14550c (it5: W letters / win rate measured ~1.4-1.8:1 on the tan); bad stays 8c1d10
     good = hex("14550c"), bad = hex("8c1d10"), -- semantic green / red darkened for parchment
-    -- v6: the "gold" / focal summary value (money: Net purse) is value ink; 6a4708 rendered pale gold-grey in it5
-    focal = hex("21150d"),
+    focal = hex("1a1006"),        -- the "gold" / focal summary value (money) is value ink on parchment
     rule = hex("3a2810", 0.6),    -- 1 px ink rule above the summary block
-    heading = hex("6e130c"),      -- v5: the tab heading (BLOODSPORTS) in ink-red darkened for parchment
-    -- v6: the 3 px selection strip on parchment. goldDeep (b8862b) sat at the parchment's own luminance (invisible
-    -- in it5); dark bronze gold reads as a strip on the tan
-    strip = hex("6a4708"),
+    heading = hex("5a120c"),      -- v14: tab heading ink-red #5a120c (JUDGE1 R-3; Shell's UI.ShellHeading wins)
+    -- v14: the 3 px selection strip is dark red #5a120c (the v6 bronze 6a4708 sat near the ground's luminance);
+    -- selEdge = the 1 px dark-gold rules above / below the selected row
+    strip = hex("5a120c"), selEdge = hex("6a4708"),
   },
   -- v7: the sidebar SUMMARY block's own parchment palette (Shell builds shell.summaryInk from it; o.sidebarInk's
   -- summaryLabel / value / good / bad / focal still override). Never the dark-pane tokens (muted / parch / emerald).
   summaryInk = {
-    label = hex("21150d"), value = hex("21150d"), good = hex("14550c"), bad = hex("8c1d10"), focal = hex("21150d"),
+    label = hex("1a1006"), value = hex("1a1006"), good = hex("14550c"), bad = hex("8c1d10"), focal = hex("1a1006"),
   },
   summarySize = 12,               -- v7: summary label / value px on parchment (forced, not the font object's size)
-  -- v6: selected nav row wash on parchment (was black @ 0.14, read as weak on the Elders sidebar)
-  parchSelWash = { 0, 0, 0, 0.22 },
+  -- v14 (JUDGE1 R-7): the selected nav row on parchment is a LIGHTER cream wash (the v6 black @ 0.22 band lowered
+  -- the label to 3.75:1); 1 px selEdge rules frame it, the strip is dark red
+  parchSelWash = { 1, 240 / 255, 200 / 255, 0.35 },
 }
 
 -- Shell metrics (Talents Forever): margin, gap, title band, tab strip, sidebar, row, button, default size, cover art.
@@ -125,8 +134,13 @@ UI.ShellMetrics = { margin = 12, gap = 8, titleBand = 50, tabStrip = 25, sidebar
   compactWidth = 820, compactHeight = 520, compactSidebar = 220,
   band = 12, depthInset = 8, wellPad = 4, bracket = 24,
   shadowGrow = 6, shadowDrop = 6, shadowAlpha = 0.45,
-  navRow = 26, navIcon = 16, navStrip = 3, summaryLine = 16, summaryGap = 8,
-  thumbTrack = 10, thumbMin = 24 }
+  navRow = 26, navIcon = 18, navStrip = 3, summaryLine = 16, summaryGap = 8,
+  thumbTrack = 10, thumbMin = 24,
+  -- v14 (JUDGE1): nav icons 18 px trimmed 0.08-0.92 in a 1 px navIconEdge frame; the summary block hangs
+  -- summaryTopGap px under the last nav row (no bottom-anchored dead zone); the tab strip drops tabDrop px so the
+  -- active tab overlaps the pane top border, and starts at contentInset (the section content's left edge)
+  navIconTrim = 0.08, navIconEdge = { 40 / 255, 28 / 255, 12 / 255, 1 }, summaryTopGap = 14, tabDrop = 5,
+  contentInset = 16 }
 
 ---------------------------------------------------------------------------
 -- Probes (probe first, degrade silently). Results are cached per path / template name.

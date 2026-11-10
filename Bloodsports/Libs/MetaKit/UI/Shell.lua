@@ -49,11 +49,29 @@
 --   shell:AddSection{ tab = "bloodsports", id = "ring", label = "The Ring", order = 1, icon = path, build = function(parent) ... end }
 --   shell:Select(tabId, sectionId)   shell:Toggle(tabId)   shell:Refresh()   shell:RemoveTab(id)
 --
+--   v14 (JUDGE1): parchment = tint 1.0 + a cream lift (SiteTokens.parchLift) toward (205,175,120); sidebar ink #1a1006
+--     on every nav / summary path; heading #5a120c with a light emboss; selected row = cream wash + 1 px dark-gold
+--     rules + a dark-red strip; 18 px nav icons, trimmed, 1 px dark frame; the summary hangs under the nav rows (not
+--     bottom-anchored); 24 px footer plate; tab strip at the content inset, dropped tabDrop px into the pane; medallion
+--     at 80%; the close chain is template -> UIPanelCloseButton -> gold-X plate. The shared shell: gold Sync plate,
+--     native close, no corners.
+--   v15 (JUDGE3): AddTab{ card = } / AddSection{ card = } / o.sidebarCard: a sidebar context card under the summary
+--     ({ title, lines }, or a function(shell, tabId, sectionId) returning one; Shell:CardSpec / LayoutCard), refreshed
+--     by Shell:RefreshSidebar(); a lone em-dash summary value (UI.ShellDash) is outlined on parchment; medallion 76%;
+--     currentSection is set before a section's onShow fires.
+--   v16 (judge4): o.sidebarWatermark (true = "logo_m" | token | path): a faint (10%) watermark centred in the
+--     parchment between the card and the Sync plate when that gap is > 140 px (Shell:LayoutWatermark, the shared
+--     shell turns it on); card lines in full ink #1a1006, the soft line #4a3418; medallion art 63% of the socket,
+--     lifted 1.5%, art + backing masked by one 86% disc centred on the socket.
+--   v13: AddTab{ titleArt = token | path, ns = ownerNs } -- the tab's wordmark replaces the title art while it is
+--     selected (token via ns, then the shell's lookup); tabs without one fall back to o.titleArt, then the text title.
+--     portraitArt is fitted: 80% (v13: 86%) of the measured socket, centred, explicitly circle-masked (shell.medallion).
+--     Sidebar tab heading: UI.ShellHeading (Cinzel Bold 16; v14: #5a120c + light emboss on parchment).
 --   v12: sections take onShow = function(frame, shell, sec) (fires each time the section comes into view); Toggle takes
 --   (tabId, sectionId).
 --   v12 shared shell: MK.UI.SharedShell(db, ns) -- the one lazily created, singleton World of Meta window (frame name
 --   "WorldOfMetaShell", the /mkchrome look: portrait chrome, logo_main wordmark, logo_m medallion, bottom corners,
---   crest flanks, parchment sidebar, dark "Sync now" footer). The first caller's db wins and the shell is stored on
+--   parchment sidebar, dark "Sync now" footer; v13: no crest flanks, per-tab wordmarks via UI.SharedTitleArt). The first caller's db wins and the shell is stored on
 --   MK.UI._sharedShell; later calls return it (a later ns is only added to the art lookup). Addons call
 --   MK.UI.RegisterSharedTab{...} / MK.UI.RegisterSharedSection{...} (same tables as shell:AddTab / AddSection); they
 --   queue until the shell exists and are applied in registration order (tabs first). MK.UI.SharedShellNamespace(ns)
@@ -471,13 +489,39 @@ UI.ShellParchmentCandidates = { "achParchment", "achParchmentAlt" }
 -- v9: titleWidth 280 -> 240 (it8: oversized, dead title-bar flanks); titleTuck = px the tab strip may ride under the
 -- wordmark's bottom (its last ~8 px at 240 wide are a narrow centred tip). close* = the closeStyle "plate" geometry.
 -- v10: titleTuck 3 -> 6 (it9: the wordmark crowded the tab row); flank* = the o.flankArt crest geometry.
+-- v13: titleTokens = per-wordmark crop (rows of the converted 512 x 256 TGA that carry art, measured from its alpha)
+-- and source aspect; a tab / shell wordmark is fitted inside the logo_main box (titleWidth x titleWidth*titleAspect)
+-- so swapping logos per tab never moves the tab strip. medallion* = the portraitArt fit: the art is drawn at
+-- medallionScale of the measured portrait socket (portraitSocket when the socket reports no size), centred on it and
+-- circle-masked with portraitMask; the socket texture itself becomes a dark, masked backing disc.
+-- v13: flankArt is dormant (owner: no crests); the option still works but nothing in the kit asks for it.
 UI.ShellArt = { titleWidth = 240, titleAspect = 344 / 800, titleLift = 10, titleTuck = 6,
   flankSize = 52, flankInset = 64, flankGap = 18, flankHalo = 60, flankHaloAlpha = 0.25,
   flankTokens = { left = { "crest_bloodsports" }, right = { "crest_elders", "crest_tournament" } },
   titleTexCoord = { 0, 1, 18 / 256, 238 / 256 },
   corner = 72, cornerCoords = { { "TOPLEFT", 0, 1, 0, 1 }, { "TOPRIGHT", 1, 0, 0, 1 }, { "BOTTOMLEFT", 0, 1, 1, 0 },
     { "BOTTOMRIGHT", 1, 0, 1, 0 } },
-  closeSize = 24, closeStroke = 1.5, closeLen = 14 }
+  closeSize = 24, closeStroke = 1.5, closeLen = 14,
+  -- v14: medallionScale 0.86 -> 0.80 (JUDGE1: the mask still trimmed the M's tips and feet at 86%)
+  -- v15: 0.80 -> 0.76 (JUDGE3 S8: the feet and the right leg still touched the inner rim)
+  -- v16 (judge4 owner defect): 0.76 -> 0.63. logo_m fills its square edge to edge, so an inscribed-circle mask the
+  -- art's own size always clipped the M's outer legs. The art is now drawn at 63% of the socket, lifted
+  -- medallionLift of the socket height, and both it and the dark backing are masked by ONE circle of medallionDisc
+  -- (86%) centred on the socket: art/disc = 0.73, ~13% of the disc diameter dark margin left and right.
+  -- v17 (judge5): 0.63 -> 0.58 (the M still crowded the rim): art/disc = 0.67, ~16% of the disc (~14% of the
+  -- socket) dark margin on every side.
+  medallionScale = 0.58, medallionDisc = 0.86, medallionLift = 0.015,
+  portraitSocket = 60, portraitMask = "Interface\\CharacterFrame\\TempPortraitAlphaMask" }
+UI.ShellArt.titleTokens = {
+  logo_main = { coords = UI.ShellArt.titleTexCoord, aspect = 344 / 800 },
+  logo_bloodsports = { coords = { 0, 1, 3 / 256, 252 / 256 }, aspect = 389 / 800 },
+  logo_elders = { coords = { 0, 1, 1 / 256, 255 / 256 }, aspect = 397 / 800 },
+}
+-- v13 sidebar tab heading (BLOODSPORTS / ELDERS): Cinzel Bold 16; on a flat / dark sidebar the gold + title shadow.
+-- v14 (JUDGE1 R-3): on the lifted parchment, ink-red #5a120c with a LIGHT emboss (255,235,190 @ 0.35) at (0.5,-0.5)
+-- instead of the v13 dark 1 px shadow (#4a0f08 + black read 2.8:1 on the mid-tone tan).
+UI.ShellHeading = { size = 16, parchInk = { 0x5a / 255, 0x12 / 255, 0x0c / 255, 1 },
+  parchShadow = { 1, 235 / 255, 190 / 255, 0.35 }, parchShadowX = 0.5, parchShadowY = -0.5, shadowX = 1, shadowY = -1 }
 
 -- v9 o.closeStyle = "plate": dark plate (plateDarkFill, goldDim 1 px rim) with a gold X. The X is two thin gold bars
 -- turned +-45 degrees (SetRotation under pcall, pixel snapping off so 1.5 px stays 1.5); when any rotation call is
@@ -760,6 +804,103 @@ end
 local Shell = {}
 Shell.__index = Shell
 
+-- v13 portrait medallion. Measured (it11 crop): logo_m was SetTexture'd straight onto the template's portrait texture,
+-- so the art filled 100% of the socket hole and the M's outer strokes ran into the ring (whatever round edge showed
+-- came from the template / ring art, not from us). Here the art gets its own texture, centred on the socket, sized to
+-- medallionScale of the socket's measured width (the portrait texture's, else its parent's, else portraitSocket), and
+-- circle-masked by an explicit mask; the socket texture turns into a dark disc under it, masked the same way. Returns
+-- nil (caller keeps the v8 path) when any piece is missing or errors, hiding whatever it made.
+local function circleMask(owner, target, center, size)
+  local okM, m = pcall(owner.CreateMaskTexture, owner)
+  if not okM or type(m) ~= "table" then return nil end
+  local ok = pcall(function()
+    if not setTex(m, UI.ShellArt.portraitMask, "CLAMPTOBLACKADDITIVE", "CLAMPTOBLACKADDITIVE") then error("mask texture") end
+    if center and size then
+      m:SetSize(size, size)
+      m:SetPoint("CENTER", center, "CENTER", 0, 0)
+    else
+      m:SetAllPoints(target)
+    end
+    if type(target.AddMaskTexture) ~= "function" then error("no AddMaskTexture") end
+    target:AddMaskTexture(m)
+  end)
+  if not ok then pcall(m.Hide, m); return nil end
+  return m
+end
+
+-- The socket's size: the portrait texture's own, else its container's (PortraitContainer) -- never the window itself
+-- (a template that parents the portrait to the frame), and nothing over 2x portraitSocket (not a socket).
+local function socketSize(p, owner, frame)
+  local cap = 2 * UI.ShellArt.portraitSocket
+  for _, r in ipairs({ p, owner ~= frame and owner or false }) do
+    if type(r) == "table" then
+      local okW, w = pcall(r.GetWidth, r)
+      local okH, h = pcall(r.GetHeight, r)
+      w, h = okW and tonumber(w) or 0, okH and tonumber(h) or 0
+      if w > 0 and h > 0 and max(w, h) <= cap then return min(w, h), true end
+    end
+  end
+  return UI.ShellArt.portraitSocket, false
+end
+
+local function fitMedallion(p, path, frame)
+  local A = UI.ShellArt
+  local okP, owner = pcall(p.GetParent, p)
+  if not okP or type(owner) ~= "table" or type(owner.CreateTexture) ~= "function" then return nil end
+  local socket, measured = socketSize(p, owner, frame)
+  local size = floor(socket * A.medallionScale + 0.5)
+  local disc = floor(socket * (A.medallionDisc or 1) + 0.5)
+  local lift = floor(socket * (A.medallionLift or 0) + 0.5)
+  local okL, layer, sub = pcall(p.GetDrawLayer, p)
+  if not okL or type(layer) ~= "string" then layer, sub = "OVERLAY", 0 end
+  sub = min(7, (tonumber(sub) or 0) + 1)
+  local okT, t = pcall(owner.CreateTexture, owner, nil, layer, nil, sub)
+  if not okT or type(t) ~= "table" then return nil end
+  local placed = setTex(t, path) and pcall(function()
+    t:SetSize(size, size)
+    t:SetPoint("CENTER", p, "CENTER", 0, lift)
+    t:SetTexCoord(0, 1, 0, 1)
+  end)
+  -- v16: both masks are the disc circle centred on the SOCKET (not the art's own inscribed circle)
+  local mask = placed and circleMask(owner, t, p, disc) or nil
+  local backMask = mask and circleMask(owner, p, p, disc) or nil
+  if not backMask then
+    pcall(t.Hide, t)
+    if mask then pcall(mask.Hide, mask) end
+    return nil
+  end
+  local d = K().plateDarkFill
+  solid(p, { d[1], d[2], d[3], 1 })
+  return { texture = t, mask = mask, backing = p, backingMask = backMask, size = size, socket = socket,
+    measured = measured, path = path, disc = disc, lift = lift }
+end
+UI.ShellFitMedallion = fitMedallion
+
+-- v13 title art spec from an option value: true -> the logo_main token, a string with a slash -> a path, any other
+-- string -> a token name. nil for anything else.
+local function titleSpec(v)
+  if v == true then return { token = "logo_main" } end
+  if type(v) == "string" and v ~= "" then
+    if v:find("[\\/]") then return { path = v } end
+    return { token = v }
+  end
+  return nil
+end
+
+-- Size + crop for a wordmark: fitted inside the logo_main box (A.titleWidth wide, its aspect high); a token without a
+-- titleTokens entry (or a path) fills the box uncropped. Returns w, h, coords | nil, boxH.
+local function titleGeometry(token)
+  local A = UI.ShellArt
+  local boxW = A.titleWidth
+  local boxH = floor(boxW * A.titleAspect + 0.5)
+  local spec = token and A.titleTokens and A.titleTokens[token]
+  if not spec then return boxW, boxH, nil, boxH end
+  local w, h = boxW, floor(boxW * spec.aspect + 0.5)
+  if h > boxH then h = boxH; w = floor(boxH / spec.aspect + 0.5) end
+  return w, h, spec.coords, boxH
+end
+UI.ShellTitleGeometry = titleGeometry
+
 function UI.Shell(o)
   o = o or {}
   local m, k = M(), K()
@@ -844,9 +985,13 @@ function UI.Shell(o)
     p = p or part(f, "PortraitContainer", "portrait") or part(f, "portrait")
     if p and type(p.SetTexture) == "function" then
       hasPortrait = true
-      -- v8: o.portraitArt fills the socket (the template's own portrait mask clips it); else the v2 portrait
+      -- v8: o.portraitArt in the socket; v13: fitted (fitMedallion: 86% of the measured socket, centred, own circle
+      -- mask, dark masked backing). No mask API -> the v8 fill; no art -> the v2 portrait.
       local pArt = artOpt(o.portraitArt, "logo_m")
-      if pArt and setTex(p, pArt) then
+      local med = pArt and fitMedallion(p, pArt, f) or nil
+      if med then
+        shell.portraitArt, shell.medallion = pArt, med
+      elseif pArt and setTex(p, pArt) then
         pcall(p.SetTexCoord, p, 0, 1, 0, 1)
         shell.portraitArt = pArt
       elseif not setTex(p, o.portrait or UI.Tex.unknown) then setTex(p, UI.Tex.unknown) end
@@ -900,15 +1045,23 @@ function UI.Shell(o)
   shell.titleBand = band
   function shell:SavePosition() savePos(self) end
 
-  -- close: the template's own, else UIPanelCloseButton, else a small dark plate
+  -- close: the template's own, else UIPanelCloseButton (probe, then pcall), else the gold-X close plate (v14: was a
+  -- bare "X" plate), else a small dark plate. shell.closeKind = "template" | "panel" | "plate" | "text".
   local close = native and part(f, "CloseButton") or nil
+  shell.closeKind = close and "template" or nil
   if not close then
-    local ok, b = pcall(CreateFrame, "Button", nil, f, "UIPanelCloseButton")
+    local ok, b = false, nil
+    if UI.HasTemplate("UIPanelCloseButton") ~= false then ok, b = pcall(CreateFrame, "Button", nil, f, "UIPanelCloseButton") end
     if ok and b then
-      close = b
+      close, shell.closeKind = b, "panel"
       close:SetPoint("TOPRIGHT", f, "TOPRIGHT", -4, -4)
     else
-      close = UI.Plate(f, { text = "X", width = 22, height = 22 })
+      local okP, plate = pcall(buildClosePlate, f)
+      if okP and plate then
+        close, shell.closeKind = plate, "plate"
+      else
+        close, shell.closeKind = UI.Plate(f, { text = "X", width = 22, height = 22 }), "text"
+      end
       close:SetPoint("TOPRIGHT", f, "TOPRIGHT", -8, -8)
     end
     pcall(close.SetFrameLevel, close, base + EDGE_LEVEL)
@@ -962,31 +1115,10 @@ function UI.Shell(o)
     if ok then shell.corners = { host = host, textures = made, path = cornerPath, mode = cornerMode }
     elseif okH and type(host) == "table" then pcall(host.Hide, host) end
   end
-  local titlePath = artOpt(o.titleArt, "logo_main")
-  if titlePath then
-    local okH, host = pcall(CreateFrame, "Frame", nil, f)
-    local w = A.titleWidth
-    local h = floor(w * A.titleAspect + 0.5)
-    local tc = o.titleArt == true and A.titleTexCoord or nil -- crop the pow2 padding of the converted logo_main
-    local ok, t = false, nil
-    if okH then ok, t = pcall(function()
-      host:SetAllPoints(f)
-      pcall(host.SetFrameLevel, host, artLevel + 1)
-      local t = newTex(host, "ARTWORK")
-      if not setTex(t, titlePath) then error("title texture") end
-      t:SetSize(w, h)
-      t:SetPoint("TOP", f, "TOP", 0, A.titleLift)
-      if tc then t:SetTexCoord(tc[1], tc[2], tc[3], tc[4]) end
-      return t
-    end) end
-    if ok then
-      title:Hide()
-      shell.titleArt = { host = host, texture = t, path = titlePath, width = w, height = h,
-        bottom = h - A.titleLift - (A.titleTuck or 0) }
-    elseif okH and type(host) == "table" then
-      pcall(host.Hide, host)
-    end
-  end
+  -- v13: the wordmark is (re)applied per selected tab by Shell:ApplyTitleArt (tab titleArt -> o.titleArt -> text);
+  -- here the shell-level one goes up before any tab exists, so LayoutBody sees its bottom
+  shell.artLevel, shell.resolveArt = artLevel, resolve
+  shell:ApplyTitleArt(nil)
   -- v10 o.flankArt: crests either side of the wordmark, one level under it; placed by LayoutBody (band centre)
   if type(o.flankArt) == "table" then
     local okH, host = pcall(CreateFrame, "Frame", nil, f)
@@ -1066,7 +1198,17 @@ function UI.Shell(o)
       tex:SetPoint("BOTTOMRIGHT", side, "BOTTOMRIGHT", -1, 1)
       local t = k.parchTint
       pcall(tex.SetVertexColor, tex, t[1], t[2], t[3], t[4] or 1)
-      shell.sidebarTexture = tex
+      shell.sidebarTexture, shell.sidebarTint = tex, t
+      -- v14: the cream lift over the parchment (SiteTokens.parchLift) takes the ground from mid-tone to light;
+      -- below every row / text frame (they are child frames of the sidebar)
+      local lc = k.parchLift
+      if lc then
+        local lift = newTex(side, "BACKGROUND", -6)
+        lift:SetPoint("TOPLEFT", side, "TOPLEFT", 1, -1)
+        lift:SetPoint("BOTTOMRIGHT", side, "BOTTOMRIGHT", -1, 1)
+        solid(lift, lc)
+        shell.sidebarLift, shell.sidebarLiftColor = lift, lc
+      end
     else
       if tex then tex:Hide() end
       mat = "flat"
@@ -1078,6 +1220,7 @@ function UI.Shell(o)
   if mat == "parchment" then
     local ink = {}
     for key, c in pairs(k.sidebarInk or {}) do ink[key] = c end
+    ink.heading = UI.ShellHeading.parchInk -- v13: beats the theme's 6e130c; o.sidebarInk.heading still wins
     if type(o.sidebarInk) == "table" then
       for key, c in pairs(o.sidebarInk) do if type(c) == "table" then ink[key] = c end end
     end
@@ -1096,16 +1239,20 @@ function UI.Shell(o)
   box(pane, { s0[1], s0[2], s0[3], 0.6 }, k.stoneEdge)
   shell.content = pane
 
+  -- v14: the strip's left edge sits on the section content's left edge (m.contentInset: the host's PANE_PAD plus the
+  -- section's own 8 px), and it drops m.tabDrop px so the active tab runs over the pane's top border
   local strip = CreateFrame("Frame", nil, f)
-  strip:SetPoint("BOTTOMLEFT", pane, "TOPLEFT", PANE_PAD, -(m.tabOverlap or 2))
-  strip:SetPoint("BOTTOMRIGHT", pane, "TOPRIGHT", -PANE_PAD, -(m.tabOverlap or 2))
+  local stripY = -((m.tabOverlap or 2) + (m.tabDrop or 0))
+  strip:SetPoint("BOTTOMLEFT", pane, "TOPLEFT", m.contentInset or PANE_PAD, stripY)
+  strip:SetPoint("BOTTOMRIGHT", pane, "TOPRIGHT", -PANE_PAD, stripY)
   strip:SetHeight(m.tab or 24)
   pcall(strip.SetFrameLevel, strip, base + 8) -- above the pane and its section hosts
   shell.tabStrip = strip
 
   -- optional footer on the sidebar bottom (o.footerText / o.onFooter), with a gold rule above it: a plate, or with
   -- o.nativeButtons the client's UIPanelButtonTemplate when it exists (probe first, plate otherwise)
-  local footH = shell.navRows and (m.navRow or 26) or ROW_H
+  -- v14: the footer is a 24 px plate (m.button; it was the 26 px nav-row height on a material sidebar)
+  local footH = m.button or ROW_H
   shell.footerHeight = footH
   if o.footerText then
     local function fire(btn, button) if type(o.onFooter) == "function" then o.onFooter(shell, btn, button) end end
@@ -1139,6 +1286,7 @@ function UI.Shell(o)
   end
 
   shell:LayoutBody()
+  shell.layoutReady = true -- v13: ApplyTitleArt may re-run LayoutBody from here on
 
   local empty = pane:CreateFontString(nil, "OVERLAY")
   UI.SetFont(empty, "body")
@@ -1182,6 +1330,89 @@ function Shell:SetSubtitle(t)
   self.subtitle:SetText(t or "")
   self.subtitle:SetShown(t ~= nil and t ~= "")
   self:LayoutBody()
+end
+
+-- v13: the title art host (one frame + one texture, made on first need, artLevel + 1, close button lifted over it).
+function Shell:EnsureTitleHost()
+  if self.titleHost then return self.titleHost, self.titleTexture end
+  if self.titleHostFailed then return nil end
+  local f = self.frame
+  local ok, host, t = pcall(function()
+    local host = CreateFrame("Frame", nil, f)
+    host:SetAllPoints(f)
+    pcall(host.SetFrameLevel, host, (self.artLevel or ((f:GetFrameLevel() or 1) + EDGE_LEVEL - 2)) + 1)
+    return host, newTex(host, "ARTWORK")
+  end)
+  if not ok or type(host) ~= "table" or type(t) ~= "table" then self.titleHostFailed = true; return nil end
+  self.titleHost, self.titleTexture = host, t
+  local close = self.closeButton
+  if close then
+    local base = (f.GetFrameLevel and f:GetFrameLevel()) or 1
+    local okL, lvl = pcall(close.GetFrameLevel, close)
+    if not okL or type(lvl) ~= "number" or lvl < base + EDGE_LEVEL then pcall(close.SetFrameLevel, close, base + EDGE_LEVEL) end
+  end
+  return host, t
+end
+
+-- v13 title chain for a tab: the tab's titleArt (AddTab{ titleArt = token | path }, a token resolved through the tab's
+-- own ns first, then the shell's art lookup), then the shell's o.titleArt, else the Cinzel text title. A candidate
+-- whose texture is missing or errors falls through to the next. Re-anchors only when the path changes; keeps
+-- shell.titleArt = { host, texture, path, token, tab, width, height, bottom } (nil while the text title shows).
+function Shell:TitleArtCandidates(tab)
+  local out = {}
+  local ts = tab and titleSpec(tab.titleArt)
+  if ts then ts.ns, ts.tab = tab.ns, tab.id; out[#out + 1] = ts end
+  local bs = titleSpec(self.opts.titleArt)
+  if bs then out[#out + 1] = bs end
+  return out
+end
+
+function Shell:ResolveTitle(spec)
+  if spec.path then return spec.path end
+  if type(spec.ns) == "table" and type(UI.Art) == "function" then
+    local ok, p = pcall(UI.Art, spec.ns, spec.token)
+    if ok and type(p) == "string" then return p end
+  end
+  return self.resolveArt and self.resolveArt(spec.token) or nil
+end
+
+function Shell:ApplyTitleArt(tab)
+  local A, f = UI.ShellArt, self.frame
+  local had = self.titleArt ~= nil
+  for _, spec in ipairs(self:TitleArtCandidates(tab)) do
+    local path = self:ResolveTitle(spec)
+    if path and self.titleArt and self.titleArt.path == path then
+      self.titleArt.tab = spec.tab
+      return true
+    end
+    local host, t = nil, nil
+    if path then host, t = self:EnsureTitleHost() end
+    if t then
+      local w, h, tc, boxH = titleGeometry(spec.token)
+      local ok = pcall(function()
+        if not setTex(t, path) then error("title texture") end
+        t:SetSize(w, h)
+        t:ClearAllPoints()
+        t:SetPoint("TOP", f, "TOP", 0, A.titleLift - floor((boxH - h) / 2)) -- a short logo centres in the box
+        if tc then t:SetTexCoord(tc[1], tc[2], tc[3], tc[4])
+        elseif self.titleCropped then t:SetTexCoord(0, 1, 0, 1) end
+      end)
+      if ok then
+        self.titleCropped = tc ~= nil
+        host:Show()
+        self.title:Hide()
+        self.titleArt = { host = host, texture = t, path = path, token = spec.token, tab = spec.tab, width = w,
+          height = h, bottom = boxH - A.titleLift - (A.titleTuck or 0) }
+        if not had and self.layoutReady then self:LayoutBody() end
+        return true
+      end
+    end
+  end
+  if self.titleHost then pcall(self.titleHost.Hide, self.titleHost) end
+  self.title:Show()
+  self.titleArt = nil
+  if had and self.layoutReady then self:LayoutBody() end
+  return false
 end
 
 -- Vertical rhythm, top down: title bar | subtitle row (only when shown) | tab strip | pane. Every step is one
@@ -1262,6 +1493,9 @@ function Shell:AddTab(o)
   tab.label, tab.owner, tab.order = o.label or tostring(o.id), o.owner, o.order or tab.order or 0
   if o.summary ~= nil then tab.summary = o.summary end
   if o.extra ~= nil then tab.extra = o.extra end
+  if o.card ~= nil then tab.card = o.card end -- v15: sidebar context card (Shell:CardSpec)
+  if o.titleArt ~= nil then tab.titleArt = o.titleArt end -- v13: token | path, swapped in while the tab is selected
+  if o.ns ~= nil then tab.ns = o.ns end                   -- v13: the owner's ns, tried first for its titleArt token
   self.sections[o.id] = self.sections[o.id] or {}
   if tab.plate then tab.plate:SetText(tab.label) end
   if tab.heading then tab.heading:SetText(tab.label) end
@@ -1284,6 +1518,7 @@ function Shell:AddSection(o)
   end
   sec.label, sec.order, sec.icon, sec.build = o.label or tostring(o.id), o.order or 0, o.icon, o.build
   sec.onShow = type(o.onShow) == "function" and o.onShow or nil
+  sec.card = o.card -- v15: this section's sidebar context card (beats the tab's)
   sec.built, sec.host, sec.frame, sec.shown, sec.buildCount = false, nil, nil, false, 0
   if self.notifiedSec == sec then self.notifiedSec = nil end
   local tab = self.tabById[o.tab]
@@ -1414,6 +1649,7 @@ function Shell:LayoutTabs(visible)
   local x = 0
   local inStrip = {}
   local overlap = m.tabOverlap or 2
+  local drop = m.tabDrop or 0 -- v14: the strip sits `drop` px lower; inactive tabs still rest on the pane border
   for _, tab in ipairs(visible) do
     inStrip[tab] = true
     if not tab.plate then
@@ -1424,20 +1660,23 @@ function Shell:LayoutTabs(visible)
         p.labelSize = m.tabLabel or 12
         p:SetText(tab.label) -- re-measure the label at its new size
       end
+      -- v14: the joint fades the active tab's bottom (overlap + drop px, inside the pane) into the pane colour, so
+      -- the tab runs over the pane border and into the pane instead of stopping on a hard stone line
       local j = newTex(p, "ARTWORK", 2)
       j:SetPoint("BOTTOMLEFT", p, "BOTTOMLEFT", 1, 0)
       j:SetPoint("BOTTOMRIGHT", p, "BOTTOMRIGHT", -1, 0)
-      j:SetHeight(overlap)
+      j:SetHeight(overlap + drop)
       local s0 = K().stone0
-      solid(j, { s0[1], s0[2], s0[3], 1 })
+      if drop > 0 then gradient(j, { s0[1], s0[2], s0[3], 0 }, { s0[1], s0[2], s0[3], 0.85 })
+      else solid(j, { s0[1], s0[2], s0[3], 1 }) end
       j:Hide()
       p.joint = j
       tab.plate = p
     end
     local active = tab.id == self.current
     tab.plate:ClearAllPoints()
-    tab.plate:SetHeight(active and (m.tab or 28) or (m.tabInactive or 24))
-    tab.plate:SetPoint("BOTTOMLEFT", self.tabStrip, "BOTTOMLEFT", x, active and 0 or overlap)
+    tab.plate:SetHeight(active and ((m.tab or 28) + drop) or (m.tabInactive or 24))
+    tab.plate:SetPoint("BOTTOMLEFT", self.tabStrip, "BOTTOMLEFT", x, active and 0 or (overlap + drop))
     tab.plate:SetOpenBottom(active)
     tab.plate:SetKind(active and "gold" or "dark")
     if tab.plate.joint then tab.plate.joint:SetShown(active) end
@@ -1460,9 +1699,19 @@ local function navRow(parent, ink)
   r.kind, r.mkEnabled, r.ink = "dark", true, ink or false
   r.wash = newTex(r, "BACKGROUND", 1)
   r.wash:SetAllPoints(r)
-  -- v6: parchment wash k.parchSelWash (0.22) and strip ink.strip (dark bronze gold); recorded for tests
+  -- v6: parchment wash k.parchSelWash and strip ink.strip; recorded for tests. v14: the wash is a LIGHT cream
+  -- (255,240,200 @ 0.35) framed by 1 px ink.selEdge rules top and bottom, the strip dark red (JUDGE1 R-7)
   r.washColor = ink and (k.parchSelWash or { 0, 0, 0, 0.22 }) or { k.gold[1], k.gold[2], k.gold[3], 0.12 }
   solid(r.wash, r.washColor)
+  if ink then
+    r.selEdgeColor = ink.selEdge or k.goldDim
+    r.selTop, r.selBottom = newTex(r, "BORDER", 1), newTex(r, "BORDER", 1)
+    r.selTop:SetPoint("TOPLEFT", r, "TOPLEFT", 0, 0)
+    r.selTop:SetPoint("TOPRIGHT", r, "TOPRIGHT", 0, 0)
+    r.selBottom:SetPoint("BOTTOMLEFT", r, "BOTTOMLEFT", 0, 0)
+    r.selBottom:SetPoint("BOTTOMRIGHT", r, "BOTTOMRIGHT", 0, 0)
+    for _, t in ipairs({ r.selTop, r.selBottom }) do t:SetHeight(1); solid(t, r.selEdgeColor); t:Hide() end
+  end
   r.hl = newTex(r, "HIGHLIGHT", 0)
   r.hl:SetAllPoints(r)
   solid(r.hl, ink and { 0, 0, 0, 0.08 } or { 1, 1, 1, 0.06 })
@@ -1478,10 +1727,18 @@ local function navRow(parent, ink)
   r.sep:SetHeight(1)
   local s = k.inkSoft
   solid(r.sep, ink and { s[1], s[2], s[3], 0.25 } or k.listSep)
+  -- v14: 18 px icons (m.navIcon), Blizzard trim (m.navIconTrim, 0.08-0.92), inside a 1 px dark m.navIconEdge frame
+  -- so black-, blue- and tan-backed icons read as one set
   local isz = m.navIcon or 16
+  local trim = m.navIconTrim or 0.07
+  r.iconEdge = newTex(r, "ARTWORK", -1)
+  r.iconEdge:SetSize(isz + 2, isz + 2)
+  solid(r.iconEdge, m.navIconEdge or { 40 / 255, 28 / 255, 12 / 255, 1 })
+  r.iconEdge:Hide()
   r.icon = newTex(r, "ARTWORK", 0)
   r.icon:SetSize(isz, isz)
-  pcall(r.icon.SetTexCoord, r.icon, 0.07, 0.93, 0.07, 0.93)
+  r.iconTrim = trim
+  pcall(r.icon.SetTexCoord, r.icon, trim, 1 - trim, trim, 1 - trim)
   r.label = r:CreateFontString(nil, "OVERLAY")
   UI.SetFont(r.label, "body")
   r.label:SetWordWrap(false)
@@ -1492,6 +1749,8 @@ local function navRow(parent, ink)
     local dx, dy = r.pressed and 1 or 0, r.pressed and -1 or 0
     r.icon:ClearAllPoints()
     r.icon:SetPoint("LEFT", r, "LEFT", 8 + dx, dy)
+    r.iconEdge:ClearAllPoints()
+    r.iconEdge:SetPoint("CENTER", r.icon, "CENTER", 0, 0)
     r.label:ClearAllPoints()
     r.label:SetPoint("LEFT", r, "LEFT", (hasIcon and (8 + isz + 8) or 12) + dx, dy)
     r.label:SetPoint("RIGHT", r, "RIGHT", -8 + dx, dy)
@@ -1500,6 +1759,7 @@ local function navRow(parent, ink)
     local sel = r.kind == "gold"
     r.strip:SetShown(sel)
     r.wash:SetShown(sel)
+    if r.selTop then r.selTop:SetShown(sel); r.selBottom:SetShown(sel) end
     local c
     if ink then c = sel and (ink.selected or k.ink) or (ink.labelSoft or k.inkSoft) else c = sel and k.gold or k.parch end
     r.label:SetTextColor(UI.Unpack(c))
@@ -1511,6 +1771,7 @@ local function navRow(parent, ink)
     if path and setTex(self.icon, path) then hasIcon = true
     elseif path then hasIcon = setTex(self.icon, UI.Tex.unknown) end
     self.icon:SetShown(hasIcon)
+    self.iconEdge:SetShown(hasIcon)
     layout()
   end
   function r:SetKind(kind) self.kind = kind == "gold" and "gold" or "dark"; paint() end
@@ -1572,6 +1833,7 @@ local function summaryColor(c, ink)
   return ink and ink.value or k.parch
 end
 UI.ShellSummaryColor = summaryColor
+UI.ShellDash = "\226\128\148" -- the em dash every "no value yet" placeholder uses (one glyph suite-wide)
 
 -- Distance from the sidebar bottom to the summary block's bottom: m.summaryGap above the footer's gold rule, or
 -- SIDE_PAD above the sidebar edge when there is no footer.
@@ -1582,12 +1844,13 @@ function Shell:SummaryBottomOffset()
   return SIDE_PAD
 end
 
--- Draws the summary block anchored to the sidebar BOTTOM (just above the footer), with a 1 px rule 8 px above its
--- first line. minTop = the highest point (px below the sidebar top) the block may reach without touching the
--- section rows; sideH = the sidebar height (0 when unknown: every line shows). Lines that do not fit are dropped
--- from the TOP of the block, never overlapping the sections. Sets tab.summaryShown (lines drawn), tab.summaryFirst
--- (index of the first drawn line) and, with a known height, tab.summaryTop (px below the sidebar top of the rule).
-function Shell:LayoutSummary(tab, minTop, sideH)
+-- v14 (JUDGE1 R-8): the summary block hangs from the TOP, under the nav rows: its 1 px rule sits at `top` (px below
+-- the sidebar top; LayoutSidebar passes the last shown row's bottom + m.summaryTopGap) and the lines follow 8 px under
+-- it. sideH = the sidebar height (0 when unknown: every line shows). Lines that would run into the footer area (the
+-- SummaryBottomOffset band) are dropped from the BOTTOM of the block. Sets tab.summaryShown (lines drawn),
+-- tab.summaryFirst (1), tab.summaryTop (rule, px below the sidebar top), tab.summaryRuleY (the same, nil when no line
+-- shows) and tab.summaryBottom (px below the sidebar top of the last drawn line's bottom).
+function Shell:LayoutSummary(tab, top, sideH)
   local m, k = M(), K()
   local ink = self.ink
   local sink = ink and (self.summaryInk or k.summaryInk or ink) or nil -- v7: the summary's own parchment palette
@@ -1601,17 +1864,15 @@ function Shell:LayoutSummary(tab, minTop, sideH)
   end
   local lh = m.summaryLine or 16
   local n = #lines
-  local bo = self:SummaryBottomOffset()
+  top = top or SIDE_HEAD
   local head = 1 + 8 -- the rule and the gap under it
   local keep = n
   if (sideH or 0) > 0 then
-    keep = max(0, min(n, floor((sideH - bo - (minTop or 0) - head) / lh)))
+    keep = max(0, min(n, floor((sideH - self:SummaryBottomOffset() - top - head) / lh)))
   end
-  local first = n - keep + 1
-  local ruleY = bo + keep * lh + 8
   sm.rule:ClearAllPoints()
-  sm.rule:SetPoint("BOTTOMLEFT", tab.side, "BOTTOMLEFT", SIDE_PAD, ruleY)
-  sm.rule:SetPoint("BOTTOMRIGHT", tab.side, "BOTTOMRIGHT", -SIDE_PAD, ruleY)
+  sm.rule:SetPoint("TOPLEFT", tab.side, "TOPLEFT", SIDE_PAD, -top)
+  sm.rule:SetPoint("TOPRIGHT", tab.side, "TOPRIGHT", -SIDE_PAD, -top)
   solid(sm.rule, ink and (ink.rule or k.goldDeep) or k.goldDim)
   sm.rule:SetShown(keep > 0)
   for i, line in ipairs(lines) do
@@ -1637,11 +1898,11 @@ function Shell:LayoutSummary(tab, minTop, sideH)
     end
     r.label:ClearAllPoints()
     r.value:ClearAllPoints()
-    local yb = bo + (n - i) * lh -- bottom of line i; the last line sits on the block bottom
-    r.label:SetPoint("BOTTOMLEFT", tab.side, "BOTTOMLEFT", SIDE_PAD + 4, yb)
-    r.value:SetPoint("BOTTOMRIGHT", tab.side, "BOTTOMRIGHT", -(SIDE_PAD + 4), yb)
+    local yt = top + head + (i - 1) * lh -- top of line i
+    r.label:SetPoint("TOPLEFT", tab.side, "TOPLEFT", SIDE_PAD + 4, -yt)
+    r.value:SetPoint("TOPRIGHT", tab.side, "TOPRIGHT", -(SIDE_PAD + 4), -yt)
     if line.text then
-      r.label:SetPoint("BOTTOMRIGHT", tab.side, "BOTTOMRIGHT", -(SIDE_PAD + 4), yb)
+      r.label:SetPoint("TOPRIGHT", tab.side, "TOPRIGHT", -(SIDE_PAD + 4), -yt)
       r.label:SetText(line.text)
       r.value:SetText("")
     else
@@ -1650,18 +1911,151 @@ function Shell:LayoutSummary(tab, minTop, sideH)
     end
     r.label:SetTextColor(UI.Unpack(sink and sink.label or UI.Tokens.muted)) -- v7: text lines too: summary label ink
     r.value:SetTextColor(UI.Unpack(summaryColor(line.color, sink)))
-    local fits = i >= first
+    -- v15 (JUDGE3 S6): a lone placeholder dash is a 1 px stroke that anti-aliases to ~3:1 even in full ink; on
+    -- parchment it is drawn with an OUTLINE (a dark edge round the stroke), so it reads at the ink's own weight
+    local dash = ink and not line.text and line.value == UI.ShellDash
+    if (r.value.mkOutline or false) ~= (dash or false) then
+      local okF, file, size = pcall(r.value.GetFont, r.value)
+      if okF and file then pcall(r.value.SetFont, r.value, file, r.value.mkSize or size or 12, dash and "OUTLINE" or "") end
+      r.value.mkOutline = dash and true or false
+    end
+    local fits = i <= keep
     r.label:SetShown(fits); r.value:SetShown(fits and not line.text)
   end
   for i = n + 1, #sm.rows do sm.rows[i].label:Hide(); sm.rows[i].value:Hide() end
-  tab.summaryShown, tab.summaryFirst, tab.summaryLines = keep, first, lines
-  tab.summaryTop = (sideH or 0) > 0 and (sideH - ruleY - 1) or nil
-  tab.summaryRuleY = keep > 0 and ruleY or nil
+  tab.summaryShown, tab.summaryFirst, tab.summaryLines = keep, 1, lines
+  tab.summaryTop = top
+  tab.summaryRuleY = keep > 0 and top or nil
+  tab.summaryBottom = keep > 0 and (top + head + keep * lh) or top
 end
 
--- v5 filler between the section rows and the summary: tab.extra (AddTab{ extra = }) else o.sidebarExtra, a
--- function(parent, shell, tabId) -> frame, built once per tab under pcall into tab.extraHost. Spans from `top` (px
--- below the sidebar top) down to 8 px over the summary rule (or the summary bottom offset when no line shows).
+-- v15 (JUDGE3 S1 / E2): the sidebar context card. Source: sec.card (AddSection{ card = }) else tab.card
+-- (AddTab{ card = }) else o.sidebarCard; a table or a function(shell, tabId, sectionId) -> table, run under pcall.
+-- Spec = { title = "LAST RESULTS", lines = { "text" | { text, soft = true, color = } } }. A soft line is the card's
+-- grey empty / hint line. Returns { title, lines = { { text, soft, color } } } or nil.
+function Shell:CardSpec(tab, sec)
+  local src = sec and sec.card
+  if src == nil then src = tab and tab.card end
+  if src == nil then src = self.opts.sidebarCard end
+  if type(src) == "function" then
+    local ok, res = pcall(src, self, tab and tab.id, sec and sec.id)
+    if not ok then self.lastError = tostring(res); return nil end
+    src = res
+  end
+  if type(src) ~= "table" then return nil end
+  local lines = {}
+  for _, l in ipairs(src.lines or {}) do
+    if type(l) == "string" then lines[#lines + 1] = { text = l }
+    elseif type(l) == "table" then
+      lines[#lines + 1] = { text = tostring(l.text or l[1] or ""), soft = (l.soft or l[2] == "soft") and true or false,
+        color = l.color }
+    end
+  end
+  if not src.title and #lines == 0 then return nil end
+  return { title = src.title and tostring(src.title) or nil, lines = lines }
+end
+
+-- Card geometry: a 1 px rule (the summary rule's colour) at `top`, the Cinzel title (UI.ShellCard.titleSize, bold,
+-- UI.ShellCard ink: a dark gold on parchment, SiteTokens.goldDim on a flat sidebar) 8 px under it, then lines of
+-- UI.ShellCard.lineSize px (sidebar ink; soft lines in the soft ink) every lineH px. Lines that would run into the
+-- footer band (SummaryBottomOffset) drop from the bottom. Sets tab.cardShown (lines drawn), tab.cardTitle,
+-- tab.cardLines (texts), tab.cardTop, tab.cardBottom; returns the card's bottom (px below the sidebar top) or nil.
+UI.ShellCard = { titleSize = 11, lineSize = 11, lineH = 14, titleH = 16,
+  parchTitle = { 0x5a / 255, 0x3a / 255, 0x08 / 255, 1 },
+  -- v16 (judge4): card lines photographed faint grey on the parchment -> full ink #1a1006, the empty / hint line a
+  -- dark brown #4a3418 (never grey)
+  parchLine = { 0x1a / 255, 0x10 / 255, 0x06 / 255, 1 }, parchSoft = { 0x4a / 255, 0x34 / 255, 0x18 / 255, 1 } }
+function Shell:LayoutCard(tab, sec, top, sideH)
+  local spec = self:CardSpec(tab, sec)
+  local cu = tab.cardUI
+  if not spec then
+    if cu then
+      cu.rule:Hide(); cu.title:Hide()
+      for _, r in ipairs(cu.rows) do r:Hide() end
+    end
+    tab.cardShown, tab.cardTitle, tab.cardLines, tab.cardTop, tab.cardBottom = 0, nil, {}, nil, nil
+    return nil
+  end
+  local m, k, C = M(), K(), UI.ShellCard
+  local ink = self.ink
+  local sink = ink and (self.summaryInk or k.summaryInk or ink) or nil
+  if not cu then
+    cu = { rows = {} }
+    cu.rule = newTex(tab.side, "ARTWORK", 0)
+    cu.rule:SetHeight(1)
+    cu.title = tab.side:CreateFontString(nil, "OVERLAY")
+    UI.Display(cu.title, C.titleSize, true)
+    cu.title.mkSize = C.titleSize
+    cu.title:SetJustifyH("LEFT")
+    cu.title:SetWordWrap(false)
+    tab.cardUI = cu
+  end
+  local bottomBand = self:SummaryBottomOffset()
+  local limit = (sideH or 0) > 0 and (sideH - bottomBand) or math.huge
+  if top + 9 + C.titleH > limit then
+    cu.rule:Hide(); cu.title:Hide()
+    for _, r in ipairs(cu.rows) do r:Hide() end
+    tab.cardShown, tab.cardTitle, tab.cardLines, tab.cardTop, tab.cardBottom = 0, spec.title, {}, top, nil
+    return nil
+  end
+  cu.rule:ClearAllPoints()
+  cu.rule:SetPoint("TOPLEFT", tab.side, "TOPLEFT", SIDE_PAD, -top)
+  cu.rule:SetPoint("TOPRIGHT", tab.side, "TOPRIGHT", -SIDE_PAD, -top)
+  solid(cu.rule, ink and (ink.rule or k.goldDeep) or k.goldDim)
+  cu.rule:Show()
+  local titleInk = ink and C.parchTitle or k.goldDim
+  cu.title:SetTextColor(UI.Unpack(titleInk))
+  cu.title:SetShadowOffset(0, 0)
+  cu.title:ClearAllPoints()
+  cu.title:SetPoint("TOPLEFT", tab.side, "TOPLEFT", SIDE_PAD + 4, -(top + 9))
+  cu.title:SetPoint("TOPRIGHT", tab.side, "TOPRIGHT", -(SIDE_PAD + 4), -(top + 9))
+  cu.title:SetText(spec.title or "")
+  cu.title:Show()
+  cu.titleColor = titleInk
+  local y = top + 9 + C.titleH
+  local shown, texts = 0, {}
+  for i, line in ipairs(spec.lines) do
+    local r = cu.rows[i]
+    if not r then
+      r = tab.side:CreateFontString(nil, "OVERLAY")
+      UI.SetFont(r, "body")
+      local okF, file, _, flags = pcall(r.GetFont, r)
+      if okF and file then pcall(r.SetFont, r, file, C.lineSize, flags or "") end
+      r.mkSize = C.lineSize
+      r:SetJustifyH("LEFT")
+      r:SetWordWrap(false)
+      cu.rows[i] = r
+    end
+    if ink then r:SetShadowOffset(0, 0) else r:SetShadowOffset(1, -1); r:SetShadowColor(0, 0, 0, 1) end
+    local c = type(line.color) == "table" and line.color
+      or (line.soft and (ink and C.parchSoft or UI.Tokens.muted))
+      or (ink and C.parchLine) or (sink and sink.label) or k.parch
+    r:SetTextColor(UI.Unpack(c))
+    r.mkColor = c
+    r:ClearAllPoints()
+    r:SetPoint("TOPLEFT", tab.side, "TOPLEFT", SIDE_PAD + 4, -y)
+    r:SetPoint("TOPRIGHT", tab.side, "TOPRIGHT", -(SIDE_PAD + 4), -y)
+    r:SetText(line.text)
+    local fits = y + C.lineH <= limit
+    r:SetShown(fits)
+    if fits then shown = shown + 1; texts[#texts + 1] = line.text; y = y + C.lineH end
+  end
+  for i = #spec.lines + 1, #cu.rows do cu.rows[i]:Hide() end
+  tab.cardShown, tab.cardTitle, tab.cardLines, tab.cardTop, tab.cardBottom = shown, spec.title, texts, top, y
+  return y
+end
+
+-- Re-lays the current tab's sidebar (summary + card) after the owner's data changed, without a full Refresh.
+function Shell:RefreshSidebar()
+  local tab = self.current and self.tabById[self.current]
+  if not (tab and tab.side) then return false end
+  self:LayoutSidebar(tab, self:SectionFor(tab.id))
+  return true
+end
+
+-- v5 filler under the summary: tab.extra (AddTab{ extra = }) else o.sidebarExtra, a function(parent, shell, tabId) ->
+-- frame, built once per tab under pcall into tab.extraHost. v14: spans from `top` (px below the sidebar top: 8 px under
+-- the summary block, or under the rows when no summary line shows) down to the footer band (SummaryBottomOffset).
 function Shell:LayoutExtra(tab, top, sideH)
   local src = tab.extra
   if src == nil then src = self.opts.sidebarExtra end
@@ -1682,7 +2076,7 @@ function Shell:LayoutExtra(tab, top, sideH)
       if ret ~= host and ret.GetNumPoints and ret:GetNumPoints() == 0 then pcall(ret.SetAllPoints, ret, host) end
     end
   end
-  local bottom = tab.summaryRuleY and (tab.summaryRuleY + 1 + 8) or self:SummaryBottomOffset()
+  local bottom = self:SummaryBottomOffset()
   host:ClearAllPoints()
   host:SetPoint("TOPLEFT", tab.side, "TOPLEFT", SIDE_PAD, -top)
   host:SetPoint("BOTTOMRIGHT", tab.side, "BOTTOMRIGHT", -SIDE_PAD, bottom)
@@ -1700,17 +2094,21 @@ function Shell:LayoutSidebar(tab, current)
     local side = CreateFrame("Frame", nil, self.sidebar)
     side:SetAllPoints(self.sidebar)
     tab.side, tab.rows = side, {}
+    -- v13 (UI.ShellHeading): Cinzel Bold 16; parchment = near-black red-brown + 1 px dark shadow (it11: the 14 px
+    -- ink-red with a white emboss read faint on the tan); flat = gold + the title shadow. Colour set after the font.
+    local H = UI.ShellHeading
     local head = side:CreateFontString(nil, "OVERLAY")
-    UI.Display(head, 14, true)
+    UI.Display(head, H.size, true)
     if ink then
-      head:SetTextColor(UI.Unpack(ink.heading or K().inkRed))
-      head:SetShadowOffset(1, -1)
-      head:SetShadowColor(1, 1, 1, 0.25) -- a faint emboss on parchment
+      head:SetShadowOffset(H.parchShadowX or H.shadowX, H.parchShadowY or H.shadowY) -- v14: light emboss
+      head:SetTextColor(UI.Unpack(ink.heading or H.parchInk))
+      head:SetShadowColor(UI.Unpack(H.parchShadow))
     else
+      head:SetShadowOffset(H.shadowX, H.shadowY)
       head:SetTextColor(UI.Unpack(K().gold))
-      head:SetShadowOffset(1, -1)
       head:SetShadowColor(UI.Unpack(K().titleShadow))
     end
+    head.mkSize = H.size
     head:SetJustifyH("LEFT")
     head:SetPoint("TOPLEFT", side, "TOPLEFT", SIDE_PAD + 4, -8)
     head:SetText(tab.label)
@@ -1756,11 +2154,61 @@ function Shell:LayoutSidebar(tab, current)
     if i <= fit then shownRows = shownRows + 1 end
   end
   for i = #list + 1, #tab.rows do tab.rows[i]:Hide() end
-  -- summary: anchored to the sidebar bottom; it may rise to 12 px under the last shown row, no higher
-  local minTop = SIDE_HEAD + (shownRows > 0 and (shownRows * (rowH + gap) - gap) or 0) + 12
-  self:LayoutSummary(tab, minTop, sideH)
-  self:LayoutExtra(tab, minTop, sideH)
+  -- v14: the summary hangs m.summaryTopGap px under the last shown row (it was bottom-anchored, leaving a ~216 px dead
+  -- zone of bare parchment between the nav and the stats); the extra filler takes the space under it
+  local rowsBottom = SIDE_HEAD + (shownRows > 0 and (shownRows * (rowH + gap) - gap) or 0)
+  self:LayoutSummary(tab, rowsBottom + (M().summaryTopGap or 14), sideH)
+  local below = (tab.summaryShown or 0) > 0 and (tab.summaryBottom + 8) or (rowsBottom + 12)
+  -- v15 (JUDGE3 S1 / E2): the section's context card fills the dead zone under the summary; the extra goes under it
+  local cardBottom = self:LayoutCard(tab, current, below + (M().cardGap or 8), sideH)
+  self:LayoutExtra(tab, cardBottom and (cardBottom + 8) or below, sideH)
+  self:LayoutWatermark(tab, cardBottom or below, sideH)
   tab.dirty = false
+end
+
+-- v16 (judge4 S-dead): a faint watermark in the parchment left between the content (card bottom, else the summary)
+-- and the Sync plate's top. o.sidebarWatermark = true (the "logo_m" token) | a token | a path (with a slash); tokens
+-- resolve through the shell's art resolver (the shared shell: every registered ns). Drawn at UI.ShellWatermark.alpha,
+-- UI.ShellWatermark.size px square, centred in that gap, only when the gap is taller than minSpace (and no sidebar
+-- extra is showing there); hidden otherwise. Sets tab.watermark = { shown, alpha, size, space, top, path }.
+UI.ShellWatermark = { token = "logo_m", alpha = 0.10, size = 120, minSpace = 140 }
+function Shell:WatermarkPath()
+  local v = self.opts.sidebarWatermark
+  if v == true then v = UI.ShellWatermark.token end
+  if type(v) ~= "string" or v == "" then return nil end
+  if v:find("[/\\]") then return v end
+  return self.resolveArt and self.resolveArt(v) or nil
+end
+
+function Shell:LayoutWatermark(tab, top, sideH)
+  local W = UI.ShellWatermark
+  local path = self:WatermarkPath()
+  local syncTop = (sideH or 0) - SIDE_PAD - (self.footer and (self.footerHeight or ROW_H) or 0)
+  local space = (sideH or 0) > 0 and (syncTop - (top or 0)) or 0
+  local extraShown = tab.extraHost and tab.extraHost:IsShown()
+  local show = path ~= nil and space > W.minSpace and not extraShown
+  local wm = tab.wmTex
+  if show and not wm then
+    wm = newTex(tab.side, "BORDER", 0)
+    tab.wmTex = wm
+  end
+  if wm then
+    if show and setTex(wm, path) then
+      local size = min(W.size, space - 16)
+      wm:ClearAllPoints()
+      wm:SetSize(size, size)
+      wm:SetPoint("CENTER", tab.side, "TOP", 0, -floor(top + space / 2 + 0.5))
+      pcall(wm.SetTexCoord, wm, 0, 1, 0, 1)
+      pcall(wm.SetVertexColor, wm, 1, 1, 1, 1)
+      pcall(wm.SetAlpha, wm, W.alpha)
+      wm:Show()
+      tab.watermark = { shown = true, alpha = W.alpha, size = size, space = space, top = top, path = path }
+      return true
+    end
+    wm:Hide()
+  end
+  tab.watermark = { shown = false, space = space, top = top, path = path }
+  return false
 end
 
 function Shell:Refresh()
@@ -1776,6 +2224,7 @@ function Shell:Refresh()
     self.current = cur and cur.id or nil
   end
   self:LayoutTabs(visible)
+  self:ApplyTitleArt(cur) -- v13: the selected tab's wordmark (else the shell's, else the text title)
 
   local sec = cur and self:SectionFor(cur.id) or nil
   for _, tab in ipairs(self.tabs) do
@@ -1787,6 +2236,9 @@ function Shell:Refresh()
   end
 
   local shown = self.frame:IsShown()
+  -- v15 (JUDGE3 F-1): currentSection names the section in view BEFORE its onShow fires (an onShow that refreshes
+  -- "the current section" refreshed the previous one, leaving a fresh pane unrefreshed until the next tick)
+  self.currentSection = sec and sec.id or nil
   if sec and shown then self:BuildSection(sec) end
   for _, list in pairs(self.sections) do
     for _, s in ipairs(list) do setSectionShown(s, shown and s == sec) end
@@ -1840,15 +2292,18 @@ end
 function UI.SharedShell(db, ns, extra)
   UI.SharedShellNamespace(ns)
   if UI._sharedShell then return UI._sharedShell end
+  -- v14 (JUDGE1): gold "Sync now" plate (24 px), the native close (template / UIPanelCloseButton, the gold-X plate
+  -- only as fallback), no corner ornaments (the bottom pair read as a clipping accident; owner disliked badges)
   local o = {
     name = "WorldOfMetaShell", title = "World of Meta", db = type(db) == "table" and db or {}, width = 960, height = 640,
     sidebarWidth = UI.ShellMetrics.compactSidebar,
-    portrait = "Interface\\Icons\\INV_Misc_Book_09", footerText = "Sync now", footerVariant = "dark",
+    portrait = "Interface\\Icons\\INV_Misc_Book_09", footerText = "Sync now", footerKind = "gold",
     chrome = "portrait", sidebar = "parchment", nativeButtons = false,
-    ns = shared.namespaces[1], art = sharedArt, titleArt = true, portraitArt = true, corners = "bottom",
-    closeStyle = "plate", flankArt = { left = "crest_bloodsports", right = { "crest_elders", "crest_tournament" } },
+    ns = shared.namespaces[1], art = sharedArt, titleArt = true, portraitArt = true,
+    -- v13: no flankArt (owner: the title band is medallion, wordmark, close only)
     footerTooltip = { "Sync now", { "Reloads the UI so the uploader can pick up your data." } },
     onFooter = sharedSync,
+    sidebarWatermark = true, -- v16 (judge4): faint logo_m in the parchment between the card and Sync
   }
   if type(extra) == "table" then for k2, v in pairs(extra) do o[k2] = v end end
   local shell = UI.Shell(o)
@@ -1860,8 +2315,19 @@ function UI.SharedShell(db, ns, extra)
   return shell
 end
 
+-- v13: the suite tabs' wordmarks, used when a registration names no titleArt of its own (def.titleArt wins; false
+-- keeps the shell-level logo_main for that tab). Each logo ships only in its owner's Media; the shell's ns chain
+-- (or def.ns) finds it.
+UI.SharedTitleArt = { bloodsports = "logo_bloodsports", elders = "logo_elders" }
+
 function UI.RegisterSharedTab(def)
   if type(def) ~= "table" or not def.id then return false end
+  if def.titleArt == nil and UI.SharedTitleArt[def.id] then
+    local copy = {}
+    for k2, v in pairs(def) do copy[k2] = v end
+    copy.titleArt = UI.SharedTitleArt[def.id]
+    def = copy
+  end
   if UI._sharedShell then UI._sharedShell:AddTab(def) else tinsert(shared.tabs, def) end
   return true
 end

@@ -135,22 +135,71 @@ local function buttonColors(variant, active)
   return bg, border, label
 end
 
+-- v15 (JUDGE3 S2 / F-8): two button tiers, both drawn from UI.SiteTokens when present.
+--   primary   (variant "accent" | "primary"): the gold plate (plateGoldTop -> plateGoldBottom fill, plateGoldEdge
+--             edge, 1 px top highlight, plateGoldLabel ink, no shadow); hover = the plateGoldHover wash.
+--   secondary (variant "default" | "secondary"): the dark plate (plateDarkFill) with a 1 px gold-dim (138,106,46)
+--             edge and plateDarkLabel ink; hover = a gold wash at alpha 0.12.
+-- "danger" and SetActive(true) keep the v1 flat colours. b.tier = "primary" | "secondary" | "flat" (for tests).
+UI.ButtonPrimary = { accent = true, primary = true }
+UI.ButtonSecondary = { default = true, secondary = true }
+
+local function buttonTier(b)
+  if b.active or not UI.SiteTokens then return "flat" end
+  if UI.ButtonPrimary[b.variant] then return "primary" end
+  if UI.ButtonSecondary[b.variant] then return "secondary" end
+  return "flat"
+end
+UI.ButtonTier = buttonTier
+
+local function goldGradient(tex, top, bottom)
+  pcall(tex.SetColorTexture, tex, 1, 1, 1, 1)
+  if tex.SetGradient and type(CreateColor) == "function" then
+    local ok = pcall(tex.SetGradient, tex, "VERTICAL", CreateColor(bottom[1], bottom[2], bottom[3], bottom[4] or 1),
+      CreateColor(top[1], top[2], top[3], top[4] or 1))
+    if ok then return end
+  end
+  pcall(tex.SetColorTexture, tex, (top[1] + bottom[1]) / 2, (top[2] + bottom[2]) / 2, (top[3] + bottom[3]) / 2, 1)
+end
+
 local function paintButton(b)
-  local K = UI.Tokens
-  local bg, border, label = buttonColors(b.variant, b.active)
-  if not b.mkEnabled then
-    label = K.muted
+  local K, S = UI.Tokens, UI.SiteTokens
+  local tier = buttonTier(b)
+  b.tier = tier
+  local bg, border, label
+  if tier == "primary" then
+    bg, border, label = S.plateGoldBottom, S.plateGoldEdge, S.plateGoldLabel
+  elseif tier == "secondary" then
+    bg, border, label = S.plateDarkFill, S.goldDim, S.plateDarkLabel
   else
-    if b.hover then
-      bg, label = K.accentFill, K.accent
-    end
+    bg, border, label = buttonColors(b.variant, b.active)
+  end
+  local wash = false
+  if not b.mkEnabled then
+    label = tier == "primary" and label or K.muted
+  elseif tier == "flat" then
+    if b.hover then bg, label = K.accentFill, K.accent end
+    if b.down then bg = darker(bg, 0.05) end
+  else
+    wash = b.hover and true or false
     if b.down then bg = darker(bg, 0.05) end
   end
   if b.SetBackdropColor then
-    b:SetBackdropColor(bg[1], bg[2], bg[3], bg[4])
+    b:SetBackdropColor(bg[1], bg[2], bg[3], bg[4] or 1)
     b:SetBackdropBorderColor(border[1], border[2], border[3], border[4] or 1)
   end
+  if b.goldFill then
+    b.goldFill:SetShown(tier == "primary")
+    b.goldHi:SetShown(tier == "primary")
+    if tier == "primary" then goldGradient(b.goldFill, S.plateGoldTop, S.plateGoldBottom) end
+    local h = S and S.plateGoldHover or { 1, 0.86, 0.42, 0.35 }
+    b.wash:SetColorTexture(h[1], h[2], h[3], tier == "primary" and (h[4] or 0.35) or 0.12)
+    b.wash:SetShown(wash)
+  end
   b.label:SetTextColor(label[1], label[2], label[3], label[4] or 1)
+  if tier == "primary" then b.label:SetShadowOffset(0, 0) else b.label:SetShadowOffset(1, -1) end
+  b.labelColor, b.borderColor = label, border
+  if tier ~= "flat" then b:SetAlpha(b.mkEnabled and 1 or 0.5) end
   b.icon:SetDesaturated(not b.mkEnabled)
 end
 
@@ -162,10 +211,28 @@ function UI.Button(parent, o)
   b.hover, b.down, b.iconTexture = false, false, o.icon or false
   UI.Backdrop(b, "flat", s)
   local h = o.height or 24
+  -- v15 plate layers (shown by paintButton for the primary / secondary tiers)
+  b.goldFill = b:CreateTexture(nil, "BACKGROUND", nil, 1)
+  b.goldFill:SetPoint("TOPLEFT", b, "TOPLEFT", 1, -1)
+  b.goldFill:SetPoint("BOTTOMRIGHT", b, "BOTTOMRIGHT", -1, 1)
+  b.goldFill:Hide()
+  b.goldHi = b:CreateTexture(nil, "BACKGROUND", nil, 2)
+  b.goldHi:SetPoint("TOPLEFT", b, "TOPLEFT", 1, -1)
+  b.goldHi:SetPoint("TOPRIGHT", b, "TOPRIGHT", -1, -1)
+  b.goldHi:SetHeight(1)
+  do local hi = (UI.SiteTokens or {}).plateGoldHighlight or { 1, 1, 0.86, 0.5 }
+    b.goldHi:SetColorTexture(hi[1], hi[2], hi[3], hi[4] or 0.5) end
+  b.goldHi:Hide()
+  b.wash = b:CreateTexture(nil, "BORDER")
+  b.wash:SetPoint("TOPLEFT", b, "TOPLEFT", 1, -1)
+  b.wash:SetPoint("BOTTOMRIGHT", b, "BOTTOMRIGHT", -1, 1)
+  b.wash:Hide()
   local label = b:CreateFontString(nil, "OVERLAY")
   UI.SetFont(label, "body")
   label:SetShadowOffset(1, -1)
   label:SetJustifyH("CENTER")
+  label:SetWordWrap(false) -- v15 (JUDGE3 C1): one line, never wrapped over the box edges
+  pcall(label.SetMaxLines, label, 1)
   b.label = label
   local icon = b:CreateTexture(nil, "ARTWORK")
   icon:SetSize(h - 8, h - 8)
@@ -406,12 +473,15 @@ end
 ---------------------------------------------------------------------------
 -- EditBox (returns a real EditBox, so GetText/SetText/GetNumLetters/SetFocus all work)
 
+function UI.InputEdge() return (UI.SiteTokens and UI.SiteTokens.goldDim) or UI.Tokens.border end
+
 function UI.EditBox(parent, o)
   o = o or {}
   local s = skinOf(o)
   local e = CreateFrame("EditBox", nil, parent, "BackdropTemplate")
   e:SetSize(o.width or 200, o.height or (o.multiline and 90 or 24))
-  if not o.bare then UI.Backdrop(e, "tip", s, UI.WithAlpha(UI.Tokens.bg, 0.95), UI.Tokens.border) end
+  -- v15 (JUDGE3 F3): one edge colour for every input: the gold-dim of the secondary buttons / dropdowns
+  if not o.bare then UI.Backdrop(e, "tip", s, UI.WithAlpha(UI.Tokens.bg, 0.95), UI.InputEdge()) end
   if GameFontHighlight then e:SetFontObject(GameFontHighlight) end
   e:SetTextColor(UI.Color(s, "text"))
   e:SetAutoFocus(false)
@@ -464,7 +534,7 @@ function UI.EditBox(parent, o)
       self:SetBackdropBorderColor(UI.Color(s, "accent"))
     end)
     e:SetScript("OnEditFocusLost", function(self)
-      self:SetBackdropBorderColor(UI.Unpack(UI.Tokens.border))
+      self:SetBackdropBorderColor(UI.Unpack(UI.InputEdge()))
     end)
   end
   refresh()
@@ -474,23 +544,75 @@ end
 ---------------------------------------------------------------------------
 -- Checkbox
 
+-- v15 (JUDGE3 F4 / R4 / F-10, all optional):
+--   o.native = true: the box is the client's gold-rimmed UICheckButtonTemplate (UI.CheckNativeSize px, mouse off so the
+--     wrapper keeps the click), probed with UI.HasTemplate + pcall; the flat 18 px box when the template does not take.
+--     c.native = true | false, c.boxSize = the box's px.
+--   o.labelLeft = true: the label sits LEFT of the box (the box on the frame's right edge), for right-anchored checks.
+--   c:MeasuredWidth() = box + label gap (8 flat, 4 native) + the label's measured width + 2 (AA overhang).
+UI.CheckNativeTemplate, UI.CheckNativeSize = "UICheckButtonTemplate", 24
+
+-- v16 (judge4): o.size sets the native box size (default UI.CheckNativeSize). The template box is sized AND pinned
+-- by two corners inside a size x size holder frame, so a template that ignores SetSize still takes the holder's size.
+local function nativeCheck(c, size)
+  if UI.HasTemplate(UI.CheckNativeTemplate) == false then return nil end
+  local okH, holder = pcall(CreateFrame, "Frame", nil, c)
+  if not (okH and holder) then return nil end
+  local ok, cb = pcall(CreateFrame, "CheckButton", nil, holder, UI.CheckNativeTemplate)
+  if not (ok and cb and cb.SetChecked) then pcall(holder.Hide, holder); return nil end
+  holder:SetSize(size, size)
+  pcall(cb.EnableMouse, cb, false)
+  pcall(cb.SetSize, cb, size, size)
+  pcall(cb.SetPoint, cb, "TOPLEFT", holder, "TOPLEFT", 0, 0)
+  pcall(cb.SetPoint, cb, "BOTTOMRIGHT", holder, "BOTTOMRIGHT", 0, 0)
+  cb.mkHolder = holder
+  -- the template's own label (modern .Text, or the $parentText global) stays empty: the wrapper draws its own
+  local own = rawget(cb, "Text") or rawget(cb, "text")
+  if own and own.Hide then pcall(own.Hide, own) end
+  return cb
+end
+
 function UI.Checkbox(parent, o)
   o = o or {}
   local s = skinOf(o)
   local c = CreateFrame("Button", nil, parent)
-  c:SetSize(o.width or 220, 22)
-  local box = CreateFrame("Frame", nil, c, "BackdropTemplate")
-  box:SetSize(18, 18)
-  box:SetPoint("LEFT", c, "LEFT", 0, 0)
-  UI.Backdrop(box, "tip", s, UI.WithAlpha(UI.Tokens.bg, 0.95), UI.Tokens.border)
-  local mark = box:CreateTexture(nil, "OVERLAY")
-  mark:SetTexture(T.check)
-  mark:SetPoint("TOPLEFT", box, "TOPLEFT", -3, 3)
-  mark:SetPoint("BOTTOMRIGHT", box, "BOTTOMRIGHT", 3, -3)
+  local nsize = tonumber(o.size) or UI.CheckNativeSize
+  local cb = o.native and nativeCheck(c, nsize) or nil
+  c:SetSize(o.width or 220, cb and math.max(22, nsize) or 22)
+  local box, mark
+  if cb then
+    box = cb
+  else
+    box = CreateFrame("Frame", nil, c, "BackdropTemplate")
+    box:SetSize(18, 18)
+    UI.Backdrop(box, "tip", s, UI.WithAlpha(UI.Tokens.bg, 0.95), UI.Tokens.border)
+    mark = box:CreateTexture(nil, "OVERLAY")
+    mark:SetTexture(T.check)
+    mark:SetPoint("TOPLEFT", box, "TOPLEFT", -3, 3)
+    mark:SetPoint("BOTTOMRIGHT", box, "BOTTOMRIGHT", 3, -3)
+  end
   local text = UI.Label(c, { skin = s, text = o.label or "", color = "text" })
-  text:SetPoint("LEFT", box, "RIGHT", 8, 0)
+  local anchor = cb and cb.mkHolder or box -- the native box is positioned through its holder
+  if o.labelLeft then
+    anchor:SetPoint("RIGHT", c, "RIGHT", 0, 0)
+    text:SetJustifyH("RIGHT")
+    text:SetPoint("RIGHT", anchor, "LEFT", cb and -4 or -8, 0)
+  else
+    anchor:SetPoint("LEFT", c, "LEFT", 0, 0)
+    text:SetPoint("LEFT", anchor, "RIGHT", cb and 4 or 8, 0)
+  end
   c.checked, c.box, c.text = false, box, text
-  function c:SetChecked(v) self.checked = v and true or false; mark:SetShown(self.checked) end
+  c.native, c.boxSize, c.labelLeft = cb ~= nil, cb and nsize or 18, o.labelLeft and true or false
+  c.boxHolder = cb and cb.mkHolder or nil
+  c.labelGap = cb and 4 or 8
+  function c:MeasuredWidth()
+    local okW, w = pcall(text.GetStringWidth, text)
+    return self.boxSize + self.labelGap + math.ceil(okW and tonumber(w) or 0) + 2
+  end
+  function c:SetChecked(v)
+    self.checked = v and true or false
+    if cb then pcall(cb.SetChecked, cb, self.checked) else mark:SetShown(self.checked) end
+  end
   function c:GetChecked() return self.checked end
   function c:SetLabel(t) text:SetText(t or "") end
   function c:SetEnabledState(v)
@@ -507,11 +629,11 @@ function UI.Checkbox(parent, o)
     if o.onChange then o.onChange(self.checked) end
   end)
   c:SetScript("OnEnter", function(self)
-    box:SetBackdropBorderColor(UI.Color(s, "title"))
+    if cb then pcall(cb.LockHighlight, cb) else box:SetBackdropBorderColor(UI.Color(s, "title")) end
     if o.tooltip then UI.ShowTip(self, o.tooltip, "ANCHOR_RIGHT") end
   end)
   c:SetScript("OnLeave", function()
-    box:SetBackdropBorderColor(UI.Unpack(UI.Tokens.border))
+    if cb then pcall(cb.UnlockHighlight, cb) else box:SetBackdropBorderColor(UI.Unpack(UI.Tokens.border)) end
     if o.tooltip then UI.HideTip() end
   end)
   return c
@@ -521,6 +643,7 @@ end
 -- Dropdown (own menu; avoids UIDropDownMenu taint)
 
 local MENU_ROWS, MENU_ROW_H = 12, 22
+UI.DropArrowSize = 18
 
 local function itemValue(it)
   if it.value ~= nil then return it.value end
@@ -535,14 +658,20 @@ function UI.Dropdown(parent, o)
   o = o or {}
   local s = skinOf(o)
   local d = UI.Button(parent, { skin = s, width = o.width or 160, height = o.height or 24, text = "", tooltip = o.tooltip })
+  -- v15 (JUDGE3 S3 / F-10): an 18 px native arrow button (UI.Tex.dropArrow, the chat scroll-down art; the pressed art
+  -- while the mouse is held) flush right inside the box, the text inset 8 px, one line with an ellipsis
+  local AW = UI.DropArrowSize
   d.label:SetJustifyH("LEFT")
   d.label:ClearAllPoints()
   d.label:SetPoint("LEFT", d, "LEFT", 8, 0)
-  d.label:SetPoint("RIGHT", d, "RIGHT", -22, 0)
+  d.label:SetPoint("RIGHT", d, "RIGHT", -(AW + 4), 0)
   local arrow = d:CreateTexture(nil, "OVERLAY")
-  arrow:SetTexture(T.arrowDown)
-  arrow:SetSize(16, 16)
-  arrow:SetPoint("RIGHT", d, "RIGHT", -3, 0)
+  arrow:SetTexture(T.dropArrow or T.arrowDown)
+  arrow:SetSize(AW, AW)
+  arrow:SetPoint("RIGHT", d, "RIGHT", -2, 0)
+  d.arrow = arrow
+  d:HookScript("OnMouseDown", function() if d.mkEnabled then arrow:SetTexture(T.dropArrowDown or T.dropArrow or T.arrowDown) end end)
+  d:HookScript("OnMouseUp", function() arrow:SetTexture(T.dropArrow or T.arrowDown) end)
   d.items, d.menuOffset = o.items or {}, 0
   local cur
 

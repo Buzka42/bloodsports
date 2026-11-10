@@ -39,6 +39,8 @@ end
 
 local function finalize(tr)
   if current == tr then current = nil end
+  if tr.finalized then return end -- one trade window is booked once, however often the client closes it
+  tr.finalized = true
   if type(tr.got) ~= "number" or type(tr.gave) ~= "number" then return end
   if tr.got == 0 and tr.gave == 0 then return end
   if not ns.char or not ns.char.trades then return end
@@ -113,8 +115,9 @@ end)
 
 A:On("TRADE_CLOSED", function()
   local tr = current
-  if not tr then return end
+  if not tr or tr.closing then return end
   if tr.both and tr.partner then
+    tr.closing = true
     A:After(1, function() finalize(tr) end)
   else
     current = nil

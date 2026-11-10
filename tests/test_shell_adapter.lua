@@ -99,6 +99,8 @@ T.test("sections refresh on show and on duel events; the sidebar summary follows
   local pane = sec(shell, "duels").frame
   T.ok(pane and pane.list, "duels pane built into the section host")
   T.eq(#pane.list.data, 0)
+  local empty = shell:SummaryLines(shell.tabById.bloodsports)
+  T.eq(empty[2].label, "Win rate"); T.eq(empty[2].value, "—", "v14: no games yet = em dash, not a faint hyphen")
   table.insert(ns.char.duels, { id = "s1", t = GetServerTime(), dur = 20, venue = "crossroads", venueKind = "practice",
     opp = { name = "Foe-Normal", class = "MAGE", level = 12 }, me = { class = "WARRIOR", level = 12, hpEnd = 40 },
     result = "win", firstBlood = "me", confirmed = "self" })

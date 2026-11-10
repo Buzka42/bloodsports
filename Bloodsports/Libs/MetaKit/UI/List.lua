@@ -195,6 +195,23 @@ end
 --   v10: rows snap to FULL rows: a pool row that would not fit entirely inside the body is hidden (never drawn
 --   half-clipped), so VisibleCount() <= VisibleRows() and a footer built on it matches what is on screen. The scroll
 --   range stays total - VisibleRows(); the last page may show fewer rows.
+--   v14 (JUDGE1 R-4 / R-5 / R-6, all optional; nil keeps the v10 list):
+--     o.gutter = px between neighbouring cells' text boxes (default 4: the v10 2 px inset per side). Each column's text
+--       box is [c.x + gutter/2, c.x + c.w - gutter/2] (recorded as c.textL / c.textR), headers included, so a
+--       right-aligned number never runs into the next column's text. Columns without `width` are flex: they share
+--       what the fixed columns leave, so the table spans the list's full width.
+--     o.chrome = "inset": a dark inset behind header + rows (bg 0,0,0 @ 0.35, 1 px (61,46,32) edge, rows inset 1 px)
+--       and a header strip (0,0,0 @ 0.35) with GameFontNormalSmall titles in gold-dim (0.84,0.66,0.30).
+--       f.chrome = { bg, edges = { top, bottom, left, right }, head } for callers / tests.
+--     o.emptyAlign = "LEFT": the empty text sits in row 1 and its hint in row 2, left-aligned at the first column's
+--       text inset (PAD + gutter/2), instead of centred in the body (for lists collapsed to 2 rows when empty).
+--     f:LayoutColumns() re-lays the columns at the current width (also runs on OnSizeChanged).
+--   v15 (JUDGE3 F-1 / F-11): f:CheckHeaders() (run by every LayoutColumns) fills f.headerIssues with header labels that
+--     overlap a neighbour, do not fit their text box at their measured width, or columns that overflow the list
+--     (empty = clean; c.headL / c.headR = each titled header's drawn x-range). A LEFT empty state starts at the first
+--     TEXT column's text inset (past any icon / class / button cell). o.emptyText = alias of o.empty.
+UI.ListInsetBg, UI.ListInsetEdge = { 0, 0, 0, 0.35 }, { 61 / 255, 46 / 255, 32 / 255, 1 }
+UI.ListHeaderStrip, UI.ListHeaderInk = { 0, 0, 0, 0.35 }, { 0.84, 0.66, 0.30, 1 }
 local function cellValue(list, col, data)
   if col.format then
     local ok, v = pcall(col.format, data)
@@ -207,6 +224,7 @@ end
 
 function UI.List(parent, o)
   o = o or {}
+  if o.empty == nil and o.emptyText ~= nil then o.empty = o.emptyText end -- v15 alias
   local s = UI.Skin(o.skin)
   local rowH = o.rowHeight or UI.Metrics.row
   local columns = {}
@@ -230,6 +248,10 @@ function UI.List(parent, o)
   if separators == nil then separators = zebra ~= nil end
   local strip = o.selectedStrip == true and 3 or (type(o.selectedStrip) == "number" and o.selectedStrip) or nil
   local iconSize = o.iconSize or min(rowH - 6, 18)
+  local gutter = tonumber(o.gutter) or 4
+  local half = gutter / 2
+  local inset = o.chrome == "inset" and 1 or 0
+  local emptyLeft = o.emptyAlign == "LEFT"
 
   local f = CreateFrame("Frame", nil, parent)
   f.skin = s
@@ -237,19 +259,47 @@ function UI.List(parent, o)
   f.data, f.offset, f.rows, f.selected, f.lastError = {}, 0, {}, false, false
   f.separators, f.selectedStrip, f.iconSize = separators and true or false, strip or false, iconSize
   f.columns = columns -- v6: read-only view of the (copied) column specs, for callers / tests
+  f.gutter, f.headerHeight, f.rowHeight = gutter, headerH, rowH
+
+  -- v14 inset chrome: dark well + 1 px edge behind everything, a darker header strip
+  if inset > 0 then
+    local ch = { edges = {} }
+    ch.bg = f:CreateTexture(nil, "BACKGROUND", nil, -8)
+    ch.bg:SetAllPoints(f)
+    ch.bg:SetColorTexture(UI.Unpack(UI.ListInsetBg))
+    for _, e in ipairs({ { "top", "TOPLEFT", "TOPRIGHT" }, { "bottom", "BOTTOMLEFT", "BOTTOMRIGHT" },
+        { "left", "TOPLEFT", "BOTTOMLEFT" }, { "right", "TOPRIGHT", "BOTTOMRIGHT" } }) do
+      local t = f:CreateTexture(nil, "BORDER")
+      t:SetPoint(e[2], f, e[2], 0, 0)
+      t:SetPoint(e[3], f, e[3], 0, 0)
+      if e[1] == "top" or e[1] == "bottom" then t:SetHeight(1) else t:SetWidth(1) end
+      t:SetColorTexture(UI.Unpack(UI.ListInsetEdge))
+      ch.edges[e[1]] = t
+    end
+    if headerH > 0 then
+      ch.head = f:CreateTexture(nil, "BACKGROUND", nil, -7)
+      ch.head:SetPoint("TOPLEFT", f, "TOPLEFT", inset, -inset)
+      ch.head:SetPoint("TOPRIGHT", f, "TOPRIGHT", -inset, -inset)
+      ch.head:SetHeight(headerH)
+      ch.head:SetColorTexture(UI.Unpack(UI.ListHeaderStrip))
+    end
+    f.chrome = ch
+  end
 
   -- header band
   local header = CreateFrame("Frame", nil, f)
-  header:SetPoint("TOPLEFT", f, "TOPLEFT", 0, 0)
-  header:SetPoint("TOPRIGHT", f, "TOPRIGHT", 0, 0)
+  header:SetPoint("TOPLEFT", f, "TOPLEFT", inset, -inset)
+  header:SetPoint("TOPRIGHT", f, "TOPRIGHT", -inset, -inset)
   header:SetHeight(max(headerH, 1))
   header:SetShown(headerH > 0)
   local hline = UI.Divider(header, s)
   hline:SetPoint("BOTTOMLEFT", header, "BOTTOMLEFT", 0, 0)
   hline:SetPoint("BOTTOMRIGHT", header, "BOTTOMRIGHT", 0, 0)
+  if inset > 0 then hline:SetColorTexture(UI.Unpack(UI.ListInsetEdge)) end
   f.headerTitles = {}
   for i, c in ipairs(columns) do
-    local fs = UI.Label(header, { skin = s, font = "small", color = "muted", justify = c.align or "LEFT" })
+    local fs = UI.Label(header, { skin = s, font = "small", color = inset > 0 and UI.ListHeaderInk or "muted",
+      justify = c.align or "LEFT" })
     fs:SetText(c.title or "")
     f.headerTitles[i] = fs
   end
@@ -266,8 +316,8 @@ function UI.List(parent, o)
 
   -- body (clipped) + rail
   local body = CreateFrame("Frame", nil, f)
-  body:SetPoint("TOPLEFT", f, "TOPLEFT", 0, -headerH)
-  body:SetPoint("BOTTOMRIGHT", f, "BOTTOMRIGHT", -scrollW, 0)
+  body:SetPoint("TOPLEFT", f, "TOPLEFT", inset, -(headerH + inset))
+  body:SetPoint("BOTTOMRIGHT", f, "BOTTOMRIGHT", -(scrollW + inset), inset)
   body:SetClipsChildren(true)
   f.body = body
 
@@ -280,8 +330,8 @@ function UI.List(parent, o)
   local rail = UI.ScrollRail(f, railOpts)
   -- the thumb track runs the full body height (header bottom to list bottom); the v2 rail keeps its 2 px insets
   local ry = thumbStyle and 0 or 2
-  rail:SetPoint("TOPRIGHT", f, "TOPRIGHT", -railInset, -(headerH + ry))
-  rail:SetPoint("BOTTOMRIGHT", f, "BOTTOMRIGHT", -railInset, ry)
+  rail:SetPoint("TOPRIGHT", f, "TOPRIGHT", -(railInset + inset), -(headerH + inset + ry))
+  rail:SetPoint("BOTTOMRIGHT", f, "BOTTOMRIGHT", -(railInset + inset), ry + inset)
   f.rail, f.thumbScroll = rail, thumbStyle
   if native then
     rail:Hide()
@@ -290,16 +340,34 @@ function UI.List(parent, o)
     f.scrollbar = native
   end
   f.nativeScroll = native and true or false
+  f.scrollWidth = scrollW
 
-  -- empty state: one centred line (12, muted) plus a hint line (10, muted) below it
-  local empty = UI.Label(body, { skin = s, font = "body", color = "muted", justify = "CENTER", text = o.empty or "" })
-  empty:SetPoint("CENTER", body, "CENTER", 0, 6)
-  local emptyHint = UI.Label(body, { skin = s, font = "small", color = "muted", justify = "CENTER", text = o.emptyHint or "" })
-  emptyHint:SetPoint("TOP", empty, "BOTTOM", 0, -6)
+  -- empty state: one centred line (12, muted) plus a hint line (10, muted) below it; v14 o.emptyAlign = "LEFT": line
+  -- in row 1, hint in row 2, both at the first column's text inset
+  local emptyJ = emptyLeft and "LEFT" or "CENTER"
+  local empty = UI.Label(body, { skin = s, font = "body", color = "muted", justify = emptyJ, text = o.empty or "" })
+  local emptyHint = UI.Label(body, { skin = s, font = "small", color = "muted", justify = emptyJ, text = o.emptyHint or "" })
+  -- v15 (JUDGE3 S4 / F-11): a LEFT empty state starts at the first TEXT column's text inset (past any icon / class
+  -- cell), so the empty line, its hint and the first header share one x; placeEmpty runs from layoutColumns
+  local function placeEmpty(ex)
+    empty:ClearAllPoints(); emptyHint:ClearAllPoints()
+    empty:SetPoint("LEFT", body, "TOPLEFT", ex, -rowH / 2)
+    empty:SetPoint("RIGHT", body, "TOPRIGHT", -(PAD + max(2, half)), -rowH / 2)
+    emptyHint:SetPoint("LEFT", body, "TOPLEFT", ex, -rowH * 1.5)
+    emptyHint:SetPoint("RIGHT", body, "TOPRIGHT", -(PAD + max(2, half)), -rowH * 1.5)
+    f.emptyInset = ex
+  end
+  f.PlaceEmpty = placeEmpty
+  if emptyLeft then
+    placeEmpty(PAD + max(2, half))
+  else
+    empty:SetPoint("CENTER", body, "CENTER", 0, 6)
+    emptyHint:SetPoint("TOP", empty, "BOTTOM", 0, -6)
+  end
   f.emptyText, f.emptyHintText = empty, emptyHint
 
   local function bodyHeight()
-    local h = f:GetHeight() - headerH
+    local h = f:GetHeight() - headerH - 2 * inset
     if not h or h < rowH then h = rowH * 10 end
     return h
   end
@@ -308,7 +376,7 @@ function UI.List(parent, o)
 
   ---- columns -----------------------------------------------------------
   local function layoutColumns()
-    local avail = (f:GetWidth() or 0) - scrollW - 2 * PAD
+    local avail = (f:GetWidth() or 0) - scrollW - 2 * PAD - 2 * inset
     if avail <= 0 then avail = 400 end
     local fixed, flex = 0, 0
     for _, c in ipairs(columns) do
@@ -318,14 +386,56 @@ function UI.List(parent, o)
     local x = PAD
     for i, c in ipairs(columns) do
       c.x, c.w = x, c.width or flexW
+      c.textL, c.textR = c.x + half, c.x + c.w - half
       x = x + c.w
       local fs = f.headerTitles[i]
       fs:ClearAllPoints()
-      fs:SetPoint("LEFT", header, "LEFT", c.x + 2, 0)
-      fs:SetWidth(c.w - 4)
+      fs:SetPoint("LEFT", header, "LEFT", c.textL, 0)
+      fs:SetWidth(max(1, c.w - gutter))
     end
+    f.columnsWidth, f.columnsAvail = x - PAD, avail
+    if emptyLeft and f.PlaceEmpty then
+      local ex = PAD + max(2, half)
+      for _, c in ipairs(columns) do
+        local kind = c.kind or "text"
+        if kind ~= "class" and kind ~= "icon" and kind ~= "button" then ex = c.textL; break end
+      end
+      f.PlaceEmpty(ex)
+    end
+    f:CheckHeaders()
     for _, row in ipairs(f.rows) do f:PlaceCells(row) end
   end
+
+  -- v15 (JUDGE3 F-1 debug assert): every titled header's drawn x-range ([headL, headR], from its measured text width
+  -- inside its text box and its alignment) must clear its neighbours', its text must fit its box (width - gutter),
+  -- and the columns must sum to no more than the width they share. f.headerIssues = { { kind = "fit" | "overlap" |
+  -- "overflow", col =, title =, need =, room = }, ... } (empty when the header row is clean).
+  function f:CheckHeaders()
+    local issues, prev = {}, nil
+    for i, c in ipairs(columns) do
+      local fs = self.headerTitles[i]
+      if c.title and c.title ~= "" and c.x and fs then
+        local okW, tw = pcall(fs.GetStringWidth, fs)
+        tw = ceil(okW and tonumber(tw) or 0)
+        local room = c.w - gutter
+        if tw > room then issues[#issues + 1] = { kind = "fit", col = i, title = c.title, need = tw, room = room } end
+        local drawn = min(tw, max(0, room))
+        if c.align == "RIGHT" then c.headR = c.textR; c.headL = c.textR - drawn
+        elseif c.align == "CENTER" then c.headL = c.x + (c.w - drawn) / 2; c.headR = c.headL + drawn
+        else c.headL = c.textL; c.headR = c.textL + drawn end
+        if prev and c.headL < prev.headR then
+          issues[#issues + 1] = { kind = "overlap", col = i, title = c.title, need = prev.headR, room = c.headL }
+        end
+        prev = c
+      end
+    end
+    if (self.columnsWidth or 0) > (self.columnsAvail or 0) + 0.5 then
+      issues[#issues + 1] = { kind = "overflow", need = self.columnsWidth, room = self.columnsAvail }
+    end
+    self.headerIssues = issues
+    return issues
+  end
+  f.LayoutColumns = function() layoutColumns() end
 
   function f:PlaceCells(row)
     for i, c in ipairs(columns) do
@@ -333,8 +443,8 @@ function UI.List(parent, o)
       if cell and c.x then
         if c.kind == "class" or c.kind == "icon" then
           local size = iconSize
-          local dx = c.x + 2
-          if c.align == "CENTER" then dx = c.x + (c.w - size) / 2 elseif c.align == "RIGHT" then dx = c.x + c.w - size - 2 end
+          local dx = c.x + max(2, half)
+          if c.align == "CENTER" then dx = c.x + (c.w - size) / 2 elseif c.align == "RIGHT" then dx = c.x + c.w - size - max(2, half) end
           cell:ClearAllPoints()
           cell:SetSize(size, size)
           cell:SetPoint("LEFT", row, "LEFT", dx, 0)
@@ -344,8 +454,8 @@ function UI.List(parent, o)
           cell:SetPoint("LEFT", row, "LEFT", c.x + 3, 0)
         else
           cell:ClearAllPoints()
-          cell:SetPoint("LEFT", row, "LEFT", c.x + 2, 0)
-          cell:SetWidth(c.w - 4)
+          cell:SetPoint("LEFT", row, "LEFT", c.textL or (c.x + half), 0)
+          cell:SetWidth(max(1, c.w - gutter))
         end
       end
     end
@@ -447,6 +557,8 @@ function UI.List(parent, o)
 
   ---- public ------------------------------------------------------------
   function f:GetPoolSize() return #self.rows end
+  -- v14: the list height that shows exactly `rows` full rows (header + chrome inset included)
+  function f:HeightFor(rows) return headerH + 2 * inset + max(0, rows or 0) * rowH end
   function f:GetData() return self.data end
   function f:GetOffset() return self.offset end
   function f:VisibleRows() return fullRows() end

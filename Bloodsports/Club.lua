@@ -68,11 +68,13 @@ function Club.MyStreak(venueId)
   return streak
 end
 
+local function live(c)
+  return c.status == "open" and (tonumber(c.t) or 0) + Club.DEADLINE > U.ServerTime()
+end
+
 local function openChallengeAt(venueId)
   for _, c in pairs(ns.char.challenges) do
-    if c.venue == venueId and c.status == "open" and (tonumber(c.t) or 0) + Club.DEADLINE > U.ServerTime() then
-      return c
-    end
+    if c.venue == venueId and live(c) then return c end
   end
 end
 
@@ -172,7 +174,7 @@ local function onDuel(rec)
   if type(rec) ~= "table" or type(rec.opp) ~= "table" or rec.result == "void" then return end
   if type(rec.series) == "table" and rec.series.champion then return end -- a bo5 round: SERIES_DONE closes the challenge
   for _, c in pairs(ns.char.challenges) do
-    if c.status == "open" and c.venue == rec.venue and c.champion ~= ""
+    if live(c) and c.venue == rec.venue and c.champion ~= ""
         and shortName(c.champion) == shortName(rec.opp.name) then
       c.status = rec.result == "win" and "won" or "lost"
       c.resolvedAt = U.ServerTime()
@@ -186,7 +188,7 @@ end
 local function onSeriesDone(ev)
   if type(ev) ~= "table" or not ev.champion or not ev.challenge or not ev.winner then return end
   local c = ns.char.challenges[ev.challenge]
-  if not c or c.status ~= "open" then return end
+  if not c or not live(c) then return end -- an expired challenge cannot be won or lost any more
   c.status = ev.winner == ev.a and "won" or "lost"
   c.series = ev.id
   c.resolvedAt = U.ServerTime()
